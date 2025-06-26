@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+build/
+dist/
+*.spec
+assets/images/wave.png
+assets/images/manga_sample.png 

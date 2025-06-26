@@ -1,0 +1,1 @@
+Ce dossier contiendra les fichiers d'interface graphique créés avec Qt Designer (.ui). 
