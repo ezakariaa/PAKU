@@ -2,18 +2,14 @@ import sys
 import os
 import json
 import functools
-import threading
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QPushButton, QLabel, QStackedWidget, QGridLayout, QScrollArea, 
                                QFileDialog, QMenu, QInputDialog, QDialog, QProgressBar)
-from PySide6.QtGui import QFont, QPixmap, QIcon, QKeySequence, QShortcut, QImage, QFontDatabase, QPainter, QColor, QDesktopServices
+from PySide6.QtGui import QFont, QPixmap, QIcon, QImage, QFontDatabase, QPainter, QColor, QDesktopServices
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QUrl
 import fitz  # PyMuPDF
-import hashlib
 import rarfile
-import shutil
 
 LIBRARY_FILE = "library.json"
 GENERATE_THUMBNAILS = True  # Activer la génération de vignettes pour voir les couvertures des PDF
@@ -189,6 +185,102 @@ class ThumbnailGenerator(QThread):
         return "assets/images/manga_sample.png"
 
 # =====================================================================================
+# LABEL AVEC COINS ARRONDIS
+# =====================================================================================
+class RoundedLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.radius = 10
+        
+    def setPixmap(self, pixmap):
+        if pixmap:
+            # Créer un masque arrondi
+            mask = QPixmap(pixmap.size())
+            mask.fill(Qt.black)
+            
+            painter = QPainter(mask)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(Qt.white)
+            painter.setPen(Qt.NoPen)
+            
+            # Dessiner un rectangle arrondi blanc sur le masque noir
+            painter.drawRoundedRect(0, 0, pixmap.width(), pixmap.height(), self.radius, self.radius)
+            painter.end()
+            
+            # Appliquer le masque à la pixmap
+            pixmap.setMask(mask.createMaskFromColor(Qt.black))
+            
+        super().setPixmap(pixmap)
+
+# =====================================================================================
+# HEADER AVEC COINS ARRONDIS
+# =====================================================================================
+class RoundedHeaderWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.radius = 8
+        self.background_image = None
+        
+    def set_background_image(self, image_path):
+        """Définit l'image de fond avec coins arrondis"""
+        if image_path and os.path.exists(image_path):
+            self.background_image = image_path
+            self.update()
+        else:
+            self.background_image = None
+            self.update()
+    
+    def paintEvent(self, event):
+        """Dessine le widget avec l'image de fond arrondie"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        if self.background_image and os.path.exists(self.background_image):
+            # Charger l'image de fond
+            pixmap = QPixmap(self.background_image)
+            if not pixmap.isNull():
+                # Redimensionner l'image pour couvrir complètement le header
+                # Utiliser KeepAspectRatioByExpanding pour remplir toute la surface
+                scaled_pixmap = pixmap.scaled(
+                    self.width(), self.height(),
+                    Qt.KeepAspectRatioByExpanding,
+                    Qt.SmoothTransformation
+                )
+                
+                # Calculer la position pour centrer l'image
+                x_offset = (scaled_pixmap.width() - self.width()) // 2
+                y_offset = (scaled_pixmap.height() - self.height()) // 2
+                
+                # Créer un masque arrondi à la taille du widget
+                mask = QPixmap(self.size())
+                mask.fill(Qt.black)
+                
+                mask_painter = QPainter(mask)
+                mask_painter.setRenderHint(QPainter.Antialiasing)
+                mask_painter.setBrush(Qt.white)
+                mask_painter.setPen(Qt.NoPen)
+                
+                # Dessiner un rectangle arrondi blanc sur le masque noir
+                mask_painter.drawRoundedRect(0, 0, self.width(), self.height(), self.radius, self.radius)
+                mask_painter.end()
+                
+                # Appliquer le masque à la pixmap
+                scaled_pixmap.setMask(mask.createMaskFromColor(Qt.black))
+                
+                # Dessiner l'image masquée en position centrée
+                painter.drawPixmap(-x_offset, -y_offset, scaled_pixmap)
+            else:
+                # Fallback vers le style par défaut
+                painter.fillRect(self.rect(), QColor("#f8f9fa"))
+        else:
+            # Style par défaut sans image
+            painter.fillRect(self.rect(), QColor("#f8f9fa"))
+        
+        # Dessiner la bordure inférieure
+        painter.setPen(QColor("#e9ecef"))
+        painter.drawLine(0, self.height() - 2, self.width(), self.height() - 2)
+
+# =====================================================================================
 # PAGE D'ACCUEIL
 # =====================================================================================
 class HomePage(QWidget):
@@ -281,6 +373,7 @@ class ThumbnailWidget(QWidget):
         self.width = width
         self.height = height
         self.show_menu = show_menu
+        self.setObjectName("thumbnailWidget")
         self.setup_ui()
 
     def setup_ui(self):
@@ -288,17 +381,29 @@ class ThumbnailWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self.img_label = QLabel()
+        # Appliquer le style hover uniquement sur l'image
+        self.setStyleSheet("")  # Pas de bordure sur le widget principal
+
+        self.img_label = RoundedLabel()
+        self.img_label.setContentsMargins(0, 0, 0, 0)
         self.update_image()
         self.img_label.setFixedSize(self.width, self.height)
-        self.img_label.setStyleSheet("border: 4px solid #111; border-radius: 14px; background: white;")
+        self.img_label.setStyleSheet("""
+            border: 4px solid #111;
+            border-radius: 14px;
+            background: transparent;
+            transition: border-color 0.2s;
+        """)
         self.img_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.img_label, alignment=Qt.AlignCenter)
+
+        # Ajout du hover sur l'image
+        self.img_label.setAttribute(Qt.WA_Hover, True)
 
         self.title_label = QLabel(self.title_text)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
-        self.title_label.setStyleSheet("font-size: 13px; color: #222;")
+        self.title_label.setStyleSheet("font-size: 15px; color: #222;")
         layout.addWidget(self.title_label)
 
         if self.show_menu and self.path:
@@ -375,6 +480,25 @@ class ThumbnailWidget(QWidget):
         self.clicked.emit()
         super().mousePressEvent(event)
 
+    def enterEvent(self, event):
+        # Appliquer le hover uniquement sur l'image
+        self.img_label.setStyleSheet("""
+            border: 4px solid #e74c3c;
+            border-radius: 14px;
+            background: transparent;
+            transition: border-color 0.2s;
+        """)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.img_label.setStyleSheet("""
+            border: 4px solid #111;
+            border-radius: 14px;
+            background: transparent;
+            transition: border-color 0.2s;
+        """)
+        super().leaveEvent(event)
+
 # =====================================================================================
 # VUE RESPONSIVE (Grille pour dossiers ou PDFs)
 # =====================================================================================
@@ -399,7 +523,7 @@ class ResponsiveGridView(QWidget):
                 background: transparent; width: 14px; margin: 4px 0 4px 0; border-radius: 7px;
             }
             QScrollBar::handle:vertical { background: #222; min-height: 40px; border-radius: 7px; }
-            QScrollBar::handle:vertical:hover { background: #2980b9; }
+            QScrollBar::handle:vertical:hover { background: #e74c3c; }
         """)
         
         main_layout = QVBoxLayout(self)
@@ -444,7 +568,7 @@ class ProgressDialog(QDialog):
         self.setFixedSize(520, 120)
         layout = QVBoxLayout(self)
         self.label = QLabel("Préparation...")
-        self.label.setStyleSheet("font-size: 16px; margin-top: 20px;")
+        self.label.setStyleSheet("font-size: 18px; margin-top: 20px;")
         layout.addWidget(self.label)
         self.progress = QProgressBar()
         self.progress.setMinimum(0)
@@ -479,16 +603,12 @@ class BookShelfPage(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         
         # Création du header avec image de fond
-        header_widget = QWidget()
-        header_widget.setFixedHeight(90)
-        header_widget.setStyleSheet("""
-            background-image: url('assets/images/header.png');
-            background-repeat: no-repeat;
-            background-position: center;
-            background-size: cover;
-        """)
+        header_widget = RoundedHeaderWidget()
+        header_widget.setFixedHeight(80)
+        header_widget.set_background_image('assets/images/header.png')
+
         header = QHBoxLayout(header_widget)
-        header.setContentsMargins(0, 0, 0, 0)
+        header.setContentsMargins(20, 20, 20, 20)
         
         back_btn = QPushButton("←")
         back_btn.setFixedSize(36, 36)
@@ -497,7 +617,8 @@ class BookShelfPage(QWidget):
         header.addWidget(back_btn)
 
         title = QLabel("BookShelf")
-        title.setFont(QFont("Inter", 28, QFont.Bold))
+        title.setFont(QFont("Inter", 32, QFont.Bold))
+        title.setStyleSheet("color: #000000; background: transparent; font-weight: bold;")
         header.addWidget(title)
         header.addStretch()
 
@@ -735,7 +856,13 @@ class FolderViewPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        header = QHBoxLayout()
+        # Création du header avec hauteur fixe
+        self.header_widget = RoundedHeaderWidget()
+        self.header_widget.setFixedHeight(80)
+        
+        header = QHBoxLayout(self.header_widget)
+        header.setContentsMargins(20, 20, 20, 20)
+        
         back_btn = QPushButton("←")
         back_btn.setFixedSize(36, 36)
         back_btn.setStyleSheet("background: none; border: none; font-size: 28px;")
@@ -743,19 +870,81 @@ class FolderViewPage(QWidget):
         header.addWidget(back_btn)
 
         self.title_label = QLabel()
-        self.title_label.setFont(QFont("Arial Black", 28))
+        self.title_label.setFont(QFont("Inter", 32, QFont.Bold))
+        self.title_label.setStyleSheet("""
+            color: #000000;
+            background: transparent;
+            border: none;
+            outline: none;
+            font-size: 32px;
+            font-weight: bold;
+            text-shadow: none;
+            box-shadow: none;
+            margin-bottom: 0px;
+        """)
         self.path_label = QLabel()
         self.path_label.setFont(QFont("Arial", 11))
+        self.path_label.setStyleSheet("""
+            color: #000000;
+            background: transparent;
+            border: none;
+            outline: none;
+            text-shadow: none;
+            box-shadow: none;
+            margin-top: 0px;
+        """)
         
         title_block = QVBoxLayout()
+        title_block.setSpacing(0)  # Supprimer l'espace vertical
+        title_block.setContentsMargins(0, 0, 0, 0)  # Supprimer les marges
         title_block.addWidget(self.title_label)
         title_block.addWidget(self.path_label)
         header.addLayout(title_block)
         header.addStretch()
 
-        layout.addLayout(header)
+        # Bouton pour définir l'image de fond du header
+        bg_btn = QPushButton()
+        bg_btn.setIcon(QIcon("assets/icons/palette.svg"))
+        bg_btn.setIconSize(QSize(28, 28))
+        bg_btn.setFixedSize(36, 36)
+        bg_btn.setStyleSheet("""
+            QPushButton {
+                background: none;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #e74c3c;
+                background: #f0f0f0;
+                border-radius: 18px;
+            }
+        """)
+        bg_btn.setToolTip("Définir l'image de fond du header")
+        bg_btn.clicked.connect(self.set_header_background)
+        header.addWidget(bg_btn)
+
+        # Bouton de rafraîchissement
+        refresh_btn = QPushButton()
+        refresh_btn.setIcon(QIcon("assets/icons/arrow-clockwise.svg"))
+        refresh_btn.setIconSize(QSize(28, 28))
+        refresh_btn.setFixedSize(36, 36)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: none;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #e74c3c;
+                background: #f0f0f0;
+                border-radius: 18px;
+            }
+        """)
+        refresh_btn.setToolTip("Actualiser le dossier")
+        refresh_btn.clicked.connect(self.refresh_folder)
+        header.addWidget(refresh_btn)
+
+        layout.addWidget(self.header_widget)
         layout.addWidget(self.grid_view)
-    
+
     def set_folder(self, folder_path):
         self.folder_path = folder_path
         # Générer les vignettes à chaque accès au dossier
@@ -775,7 +964,165 @@ class FolderViewPage(QWidget):
         # Afficher l'alias si disponible, sinon le nom du dossier
         self.title_label.setText(alias if alias else os.path.basename(folder_path))
         self.path_label.setText(folder_path)
+        
+        # Charger l'image de fond du header
+        self.load_header_background()
+        
         self.refresh_view()
+
+    def load_header_background(self):
+        """Charge l'image de fond du header"""
+        try:
+            # Chercher une image de fond personnalisée dans le dossier
+            custom_bg_path = os.path.join(self.folder_path, "_header_bg.png")
+            print(f"Recherche de l'image de fond personnalisée: {custom_bg_path}")
+            
+            if os.path.exists(custom_bg_path):
+                print(f"Image personnalisée trouvée: {custom_bg_path}")
+                # Utiliser l'image personnalisée
+                self.header_widget.set_background_image(custom_bg_path)
+                print("Image personnalisée appliquée au header")
+                
+                # Changer la couleur du titre et du chemin en blanc
+                self.title_label.setStyleSheet("""
+                    color: #000000;
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    font-size: 32px;
+                    font-weight: bold;
+                    text-shadow: none;
+                    box-shadow: none;
+                    margin-bottom: 0px;
+                """)
+                self.path_label.setStyleSheet("""
+                    color: #000000;
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    text-shadow: none;
+                    box-shadow: none;
+                    margin-top: 0px;
+                """)
+            else:
+                print(f"Image personnalisée non trouvée, utilisation de l'image par défaut")
+                # Utiliser l'image par défaut
+                default_bg_path = "assets/images/header.png"
+                if os.path.exists(default_bg_path):
+                    self.header_widget.set_background_image(default_bg_path)
+                    print("Image par défaut appliquée au header")
+                    
+                    # Changer la couleur du titre et du chemin en blanc pour l'image par défaut aussi
+                    self.title_label.setStyleSheet("""
+                        color: #000000;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        font-size: 32px;
+                        font-weight: bold;
+                        text-shadow: none;
+                        box-shadow: none;
+                        margin-bottom: 0px;
+                    """)
+                    self.path_label.setStyleSheet("""
+                        color: #000000;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        text-shadow: none;
+                        box-shadow: none;
+                        margin-top: 0px;
+                    """)
+                else:
+                    print(f"Image par défaut non trouvée, utilisation du style par défaut")
+                    # Fallback vers le style par défaut (pas d'image)
+                    self.header_widget.set_background_image(None)
+                    
+                    # Remettre les couleurs par défaut
+                    self.title_label.setStyleSheet("""
+                        color: #000;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        font-size: 32px;
+                        font-weight: bold;
+                        text-shadow: none;
+                        box-shadow: none;
+                        margin-bottom: 0px;
+                    """)
+                    self.path_label.setStyleSheet("""
+                        color: #666;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        text-shadow: none;
+                        box-shadow: none;
+                        margin-top: 0px;
+                    """)
+        except Exception as e:
+            print(f"Erreur lors du chargement de l'image de fond du header: {e}")
+            # Fallback vers le style par défaut
+            self.header_widget.set_background_image(None)
+            
+            # Remettre les couleurs par défaut
+            self.title_label.setStyleSheet("""
+                color: #000;
+                background: transparent;
+                border: none;
+                outline: none;
+                font-size: 32px;
+                font-weight: bold;
+                text-shadow: none;
+                box-shadow: none;
+                margin-bottom: 0px;
+            """)
+            self.path_label.setStyleSheet("""
+                color: #666;
+                background: transparent;
+                border: none;
+                outline: none;
+                text-shadow: none;
+                box-shadow: none;
+                margin-top: 0px;
+            """)
+
+    def set_header_background(self):
+        """Permet à l'utilisateur de choisir une image de fond pour le header"""
+        try:
+            image_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Choisir une image de fond pour le header",
+                "",
+                "Images (*.png *.jpg *.jpeg *.bmp)"
+            )
+
+            if image_path and os.path.exists(image_path):
+                # Copier l'image dans le dossier avec le nom _header_bg.png
+                custom_bg_path = os.path.join(self.folder_path, "_header_bg.png")
+                
+                try:
+                    # Copier et redimensionner l'image pour qu'elle s'adapte au header
+                    pixmap = QPixmap(image_path)
+                    # Redimensionner à une résolution plus élevée pour une meilleure qualité
+                    # Utiliser une largeur plus grande pour éviter la pixélisation
+                    target_width = max(self.header_widget.width() * 2, 800)  # Minimum 800px de large
+                    target_height = 80 * 2  # 160px de hauteur pour une meilleure qualité
+                    
+                    scaled_pixmap = pixmap.scaled(
+                        target_width, target_height,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    scaled_pixmap.save(custom_bg_path, "PNG", quality=95)  # Qualité PNG maximale
+                    
+                    # Recharger l'image de fond
+                    self.load_header_background()
+                    
+                    print(f"Nouvelle image de fond définie pour le header: {custom_bg_path}")
+                except Exception as e:
+                    print(f"Erreur lors de la définition de l'image de fond : {e}")
+        except Exception as e:
+            print(f"Erreur lors de la sélection de l'image de fond : {e}")
 
     def refresh_view(self):
         widgets = []
@@ -825,6 +1172,24 @@ class FolderViewPage(QWidget):
         except Exception:
             pass
         self.refresh_view()
+
+    def refresh_folder(self):
+        """Actualise le dossier en régénérant les vignettes et en affichant les nouveaux fichiers"""
+        if hasattr(self, 'folder_path') and self.folder_path:
+            # Afficher un popup de progression
+            progress_dialog = ProgressDialog(self)
+            progress_dialog.setWindowTitle("Actualisation du dossier")
+            progress_dialog.show()
+            
+            def progress_callback(msg, value=None):
+                progress_dialog.update_message(msg, value)
+            
+            # Régénérer toutes les vignettes du dossier
+            generate_all_thumbnails_for_folder(self.folder_path, progress_callback)
+            progress_dialog.close()
+            
+            # Actualiser l'affichage
+            self.refresh_view()
 
 # =====================================================================================
 # LECTEUR DE FICHIERS (PDF et CBZ)
