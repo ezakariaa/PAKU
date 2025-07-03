@@ -1,61 +1,92 @@
 # MangaPDFReader
 
-Un lecteur de PDF avec une interface inspirée des lecteurs de manga modernes.
+A modern, offline manga and PDF reader with a beautiful, responsive interface and advanced library management features.
 
-## Structure du projet
+## Project Structure
 
-- `main.py` : Point d'entrée de l'application.
-- `ui/` : Fichiers d'interface graphique (créés avec Qt Designer).
-- `assets/images/` : Images, fonds, icônes.
-- `assets/fonts/` : Polices personnalisées.
-- `requirements.txt` : Dépendances Python.
+- `main.py`: Application entry point.
+- `ui/`: GUI layout files (Qt Designer).
+- `assets/`: Images, icons, banners, and fonts.
+- `styles/`: Custom style definitions.
+- `requirements.txt`: Python dependencies.
 
-## Lancement
+## Features
 
-1. Installez les dépendances :
+### ✅ Main Features
+- **Modern Home Page**: Stylish, manga-inspired welcome screen.
+- **Library Management**: Add folders, set aliases, custom covers, and remove items from your bookshelf.
+- **AniList Integration**: Automatic retrieval of manga info, banners, tags, and genres from AniList when adding a new folder.
+- **Thumbnails**: Auto-generated covers for folders and files (PDF, CBZ, ZIP, RAR, images), with fallback and custom cover support.
+- **Multi-format Support**: Read PDF, CBZ, ZIP, RAR, and image folders seamlessly.
+- **Multiple Selection & Batch Delete**: Select multiple items and delete them in one click.
+- **Search, Sort & Filter**: Powerful search bar, A-Z/Z-A sorting, and filter options for your library.
+- **Contextual Menus**: Right-click (⋯) menu for alias, original cover, open in explorer, and remove actions.
+- **Customizable Header**: Change the banner/header image for each folder.
+- **Keyboard Shortcuts**: Fast navigation and zoom controls.
+- **Responsive Design**: Adapts to all window sizes, with a modern look and feel.
+- **Donation Buttons**: BuyMeACoffee and Paypal support directly from the home page.
+
+### 🎮 Keyboard Shortcuts
+- **Left/Right arrows**: Navigate between pages
+- **Home/End**: Go to first/last page
+- **Ctrl +**: Zoom in
+- **Ctrl -**: Zoom out
+- **Ctrl 0**: Reset zoom
+
+## How to Run
+
+1. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-2. Lancez l'application :
+2. Launch the application:
    ```bash
    python main.py
    ```
 
-## Fonctionnalités
+## Build a Standalone Executable (Windows)
 
-### ✅ Fonctionnalités implémentées
-- **Page d'accueil stylisée** : Interface manga moderne avec design "RULIA"
-- **Ouverture de PDF** : Sélection et chargement de fichiers PDF
-- **Lecteur PDF complet** : Affichage des pages avec PyMuPDF
-- **Navigation** : Boutons précédent/suivant, première/dernière page
-- **Zoom** : Contrôles de zoom avec boutons et raccourcis clavier
-- **Raccourcis clavier** : Navigation rapide avec le clavier
-- **Interface responsive** : Design moderne et intuitif
+You can generate a standalone `.exe` with all assets and a custom icon:
 
-### 🎮 Raccourcis clavier
-- **Flèches gauche/droite** : Navigation entre les pages
-- **Home/End** : Aller à la première/dernière page
-- **Ctrl +** : Zoom avant
-- **Ctrl -** : Zoom arrière
-- **Ctrl 0** : Reset du zoom
+1. Make sure you have [PyInstaller](https://pyinstaller.org/) installed:
+   ```bash
+   pip install pyinstaller
+   ```
+2. Run this command in your project folder:
+   ```bash
+   pyinstaller --noconfirm --onefile --windowed --icon=assets/images/logo.ico --add-data "assets;assets" --add-data "styles;styles" main.py
+   ```
+   - The executable will be in the `dist/` folder.
+   - All images, icons, and fonts will be included and displayed correctly.
 
-### 🎨 Interface
-- Design inspiré des lecteurs de manga modernes
-- Couleurs et typographie appropriées
-- Boutons stylisés avec effets hover
-- Zone de lecture avec scroll automatique
-- Barre de navigation complète
+## Dependencies
 
-## Dépendances
+- **PySide6**: Qt GUI
+- **PyMuPDF**: PDF reading and rendering
+- **rarfile**: RAR archive support
+- **requests**: AniList API integration
 
-- **PySide6** : Interface graphique Qt
-- **PyMuPDF** : Lecture et rendu des PDF
+## Future Development
 
-## Développement futur
+- 🔄 Fullscreen mode
+- 🔄 Page rotation
+- 🔄 Text extraction
+- 🔄 Recent files history
+- 🔄 Customizable themes
+- 🔄 More advanced filters and tags
+- 🔄 Enhanced CBZ/CBR support
 
-- 🔄 Mode plein écran
-- 🔄 Rotation des pages
-- 🔄 Extraction de texte
-- 🔄 Historique des fichiers récents
-- 🔄 Thèmes personnalisables
-- 🔄 Support des formats CBZ/CBR 
+## Releases
+
+You can download the latest Windows executable from the [Releases](https://github.com/your-username/your-repo/releases) page on GitHub.
+
+### How to use the release
+1. Go to the Releases page and download the file `main.exe` (for example, from tag `v1.0.0`).
+2. Double-click `main.exe` to launch the application. No installation required.
+3. All features and assets are included in the executable.
+
+**Note:** If you encounter a warning from Windows SmartScreen, click on "More info" and then "Run anyway". This is normal for new unsigned applications.
+
+---
+
+**If you enjoy this project, please consider supporting via BuyMeACoffee or Paypal (links in the app)!** 
