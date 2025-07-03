@@ -7,6 +7,13 @@ import fitz  # PyMuPDF
 import rarfile
 import requests
 
+# === AJOUT : Fonction utilitaire pour les chemins d'assets compatible PyInstaller ===
+def resource_path(relative_path):
+    """Retourne le chemin absolu vers un fichier ressource, compatible PyInstaller et dev."""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath('.'), relative_path)
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStackedWidget, QGridLayout, QScrollArea,
@@ -25,9 +32,8 @@ from styles.styles import (
     HOME_PAGE_BUTTON_STYLE, BMC_BUTTON_STYLE, THUMBNAIL_IMAGE_STYLE,
     THUMBNAIL_IMAGE_HOVER_STYLE, THUMBNAIL_MENU_BUTTON_STYLE,
     SCROLL_AREA_STYLE, BACK_BUTTON_STYLE,
-    BOOKSHELF_ADD_BUTTON_STYLE, PAGE_TITLE_STYLE, FOLDER_PATH_STYLE,
-    PAGE_TITLE_STYLE_BOOKSHELF, ICON_BUTTON_STYLE_BOOKSHELF,
-    ICON_BUTTON_STYLE_FOLDER
+    PAGE_TITLE_STYLE, FOLDER_PATH_STYLE,
+    PAGE_TITLE_STYLE_BOOKSHELF
 )
 
 from ui.flowlayout import FlowLayout
@@ -113,7 +119,7 @@ class HomePage(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(30)
         logo_label = QLabel()
-        logo_pixmap = QPixmap("assets/images/logo.png")
+        logo_pixmap = QPixmap(resource_path("assets/images/logo.png"))
         logo_label.setPixmap(logo_pixmap.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -138,6 +144,26 @@ class HomePage(QWidget):
         bmc_btn.setStyleSheet(BMC_BUTTON_STYLE)
         bmc_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.buymeacoffee.com/ezakaria')))
         layout.addWidget(bmc_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+
+        # Ajout du bouton Paypal Me
+        paypal_btn = QPushButton('💙 Paypal Me')
+        paypal_btn.setStyleSheet('''
+            QPushButton {
+                background-color: #0070ba;
+                color: #fff;
+                border: none;
+                border-radius: 10px;
+                font-family: 'Inter';
+                font-size: 18px;
+                padding: 10px 30px;
+                margin-top: 10px;
+            }
+            QPushButton:hover {
+                background-color: #1546a0;
+            }
+        ''')
+        paypal_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.paypal.me/ZELORCHE')))
+        layout.addWidget(paypal_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
 # =====================================================================================
 # WIDGET VIGNETTE (Utilisé pour Dossiers et PDF)
@@ -211,8 +237,69 @@ class ThumbnailWidget(QWidget):
             alias_action = menu.addAction("Set alias")
             alias_action.triggered.connect(lambda: self.alias_requested.emit(self.path, self.title_text))
             if os.path.isdir(self.path):
-                tags_action = menu.addAction("Add Tags")
-                tags_action.triggered.connect(lambda: self.tags_requested.emit(self.path))
+                # Remplacer Add Tags par Original Cover
+                def set_original_cover():
+                    folder_path = self.path
+                    # Chercher le premier fichier supporté
+                    files = [f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS)]
+                    files.sort()
+                    file_for_thumb = os.path.join(folder_path, files[0]) if files else None
+                    if not file_for_thumb:
+                        # Si aucune archive, chercher une image
+                        images = [f for f in os.listdir(folder_path) if f.lower().endswith(IMAGE_EXTENSIONS)]
+                        images.sort()
+                        if images:
+                            file_for_thumb = os.path.join(folder_path, images[0])
+                    if file_for_thumb:
+                        thumb_dir = os.path.join(folder_path, '.thumbnails')
+                        os.makedirs(thumb_dir, exist_ok=True)
+                        cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                        try:
+                            if file_for_thumb.lower().endswith('.pdf'):
+                                doc = fitz.open(file_for_thumb)
+                                if len(doc) > 0:
+                                    page = doc[0]
+                                    pix = page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2))
+                                    pix.save(cover_path)
+                                doc.close()
+                            elif file_for_thumb.lower().endswith(('.cbz', '.zip')):
+                                with zipfile.ZipFile(file_for_thumb, 'r') as zip_file:
+                                    image_files = [f for f in zip_file.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
+                                    if image_files:
+                                        image_files.sort()
+                                        first_image = image_files[0]
+                                        with zip_file.open(first_image) as image_file:
+                                            image_data = image_file.read()
+                                            qimage = QImage()
+                                            if qimage.loadFromData(image_data):
+                                                pixmap = QPixmap.fromImage(qimage)
+                                                scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                                scaled_pixmap.save(cover_path)
+                            elif file_for_thumb.lower().endswith('.rar'):
+                                with rarfile.RarFile(file_for_thumb, 'r') as rar:
+                                    image_files = [f for f in rar.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
+                                    if image_files:
+                                        image_files.sort()
+                                        first_image = image_files[0]
+                                        with rar.open(first_image) as image_file:
+                                            image_data = image_file.read()
+                                            qimage = QImage()
+                                            if qimage.loadFromData(image_data):
+                                                pixmap = QPixmap.fromImage(qimage)
+                                                scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                                scaled_pixmap.save(cover_path)
+                            elif file_for_thumb.lower().endswith(IMAGE_EXTENSIONS):
+                                qimage = QImage(file_for_thumb)
+                                if not qimage.isNull():
+                                    pixmap = QPixmap.fromImage(qimage)
+                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                    scaled_pixmap.save(cover_path)
+                            # Rafraîchir la vignette
+                            self.update_thumbnail(cover_path)
+                        except Exception as e:
+                            print(f"Erreur lors de la génération de la couverture originale : {e}")
+                original_cover_action = menu.addAction("Original Cover")
+                original_cover_action.triggered.connect(set_original_cover)
             explorer_action = menu.addAction("Open in Explorer")
             explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
             remove_action = menu.addAction("Remove from bookshelf")
@@ -371,19 +458,10 @@ class BookShelfPage(QWidget):
         # Création du header avec image de fond
         header_widget = RoundedHeaderWidget()
         header_widget.setFixedHeight(80)
-        header_widget.set_background_image('assets/images/header.png')
+        header_widget.set_background_image(resource_path('assets/images/header.png'))
 
         header = QHBoxLayout(header_widget)
         header.setContentsMargins(20, 20, 20, 20)
-        
-        # Bouton retour (blanc)
-        back_btn = QPushButton()
-        back_btn.setIcon(QIcon("assets/icons/arrow-left-white.png"))
-        back_btn.setIconSize(QSize(36, 36))
-        back_btn.setFixedSize(36, 36)
-        back_btn.setStyleSheet(ICON_BUTTON_STYLE_FOLDER)
-        back_btn.clicked.connect(self.back_clicked.emit)
-        header.addWidget(back_btn)
 
         # Affichage du titre Bookshelf (simple)
         title = QLabel("BookShelf")
@@ -395,21 +473,15 @@ class BookShelfPage(QWidget):
         filter_bar = QHBoxLayout()
         filter_bar.setSpacing(10)
 
-        filter_btn = QPushButton()
-        filter_btn.setIcon(QIcon("assets/icons/funnel.svg"))
-        filter_btn.setIconSize(QSize(28, 28))
-        filter_btn.setStyleSheet(ICON_BUTTON_STYLE_BOOKSHELF)
-        filter_btn.setToolTip("Filtrer")
+        # Le bouton retour est le premier du groupe d'icônes à droite
+        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
+        filter_bar.addWidget(back_btn)
+
+        filter_btn = make_header_btn(resource_path("assets/icons/funnel-white.svg"), "Filtrer", lambda: None)
         filter_bar.addWidget(filter_btn)
 
         # Bouton Sélectionner (sélection multiple)
-        self.select_btn = QPushButton()
-        self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-        self.select_btn.setIconSize(QSize(28, 28))
-        self.select_btn.setFixedSize(36, 36)
-        self.select_btn.setStyleSheet(ICON_BUTTON_STYLE_FOLDER)
-        self.select_btn.setToolTip("Sélectionner des fichiers")
-        self.select_btn.clicked.connect(self.toggle_selection_mode)
+        self.select_btn = make_header_btn(resource_path("assets/icons/check2-all-white.svg"), "Sélectionner des fichiers", self.toggle_selection_mode)
         filter_bar.addWidget(self.select_btn)
 
         from PySide6.QtWidgets import QLineEdit
@@ -429,32 +501,16 @@ class BookShelfPage(QWidget):
                 self.search_field.setVisible(True)
                 self.search_field.setFixedWidth(200)
                 self.search_field.setFocus()
-        search_btn = QPushButton()
-        search_btn.setIcon(QIcon("assets/icons/search.svg"))
-        search_btn.setIconSize(QSize(28, 28))
-        search_btn.setStyleSheet(ICON_BUTTON_STYLE_BOOKSHELF)
-        search_btn.setToolTip("Rechercher")
-        search_btn.clicked.connect(toggle_search)
+        search_btn = make_header_btn(resource_path("assets/icons/search-white.svg"), "Rechercher", toggle_search)
         filter_bar.addWidget(search_btn)
 
         self.sort_az = True
-        self.sort_btn = QPushButton()
-        self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-down.svg"))
-        self.sort_btn.setIconSize(QSize(28, 28))
-        self.sort_btn.setStyleSheet(ICON_BUTTON_STYLE_BOOKSHELF)
-        self.sort_btn.setToolTip("Trier A-Z")
-        self.sort_btn.clicked.connect(self.toggle_sort)
+        self.sort_btn = make_header_btn(resource_path("assets/icons/sort-alpha-down-white.svg"), "Trier A-Z", self.toggle_sort)
         filter_bar.addWidget(self.sort_btn)
 
         header.addLayout(filter_bar)
 
-        add_btn = QPushButton()
-        add_btn.setIcon(QIcon("assets/icons/folder-plus.svg"))
-        add_btn.setIconSize(QSize(32, 32))
-        add_btn.setFixedSize(36, 36)
-        add_btn.setStyleSheet(BOOKSHELF_ADD_BUTTON_STYLE)
-        add_btn.setToolTip("Ajouter un dossier")
-        add_btn.clicked.connect(self.add_folder_clicked.emit)
+        add_btn = make_header_btn(resource_path("assets/icons/folder-plus-white.svg"), "Ajouter un dossier", self.add_folder_clicked.emit)
         header.addWidget(add_btn)
         header.addSpacing(20)
         
@@ -689,11 +745,11 @@ class BookShelfPage(QWidget):
     def toggle_sort(self):
         if self.sort_az:
             self.library.sort(key=lambda d: d.get("alias", os.path.basename(d["path"])).lower())
-            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-up.svg"))
+            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-up-white.svg"))
             self.sort_btn.setToolTip("Trier Z-A")
         else:
             self.library.sort(key=lambda d: d.get("alias", os.path.basename(d["path"])).lower(), reverse=True)
-            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-down.svg"))
+            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-down-white.svg"))
             self.sort_btn.setToolTip("Trier A-Z")
         self.sort_az = not self.sort_az
         self.save_library()
@@ -715,6 +771,34 @@ class BookShelfPage(QWidget):
                 self.selected_items.clear()
             self.refresh_shelf()
             print(f"[DEBUG] Mode sélection : {self.selection_mode}")
+
+# === AJOUT : Fonction utilitaire globale pour les boutons d'icônes header ===
+def make_header_btn(icon_path, tooltip, callback):
+    btn = QPushButton()
+    btn.setIcon(QIcon(icon_path))
+    btn.setIconSize(QSize(32, 32))
+    btn.setFixedSize(48, 48)
+    btn.setStyleSheet(
+        """
+        QPushButton {
+            background: rgba(0,0,0,0.45);
+            border-radius: 24px;
+            border: none;
+        }
+        QPushButton:hover {
+            background: #95a5a6;
+            color: #222;
+        }
+        """
+    )
+    btn.setToolTip(tooltip)
+    btn.clicked.connect(callback)
+    shadow = QGraphicsDropShadowEffect()
+    shadow.setBlurRadius(12)
+    shadow.setColor(QColor(0, 0, 0, 200))
+    shadow.setOffset(0, 3)
+    btn.setGraphicsEffect(shadow)
+    return btn
 
 # =====================================================================================
 # PAGE DOSSIER (Vignettes PDF)
@@ -781,9 +865,13 @@ class FolderViewPage(QWidget):
         right_col.setSpacing(18)
         right_col.setContentsMargins(0, 0, 0, 0)
 
-        # Bouton de sélection multiple (caché par défaut)
+        right_col.addWidget(make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.navigate_back))
+        right_col.addWidget(make_header_btn(resource_path("assets/icons/palette-white.svg"), "Changer la bannière", self.set_header_background))
+        right_col.addWidget(make_header_btn(resource_path("assets/icons/arrow-clockwise-white.svg"), "Rafraîchir", self.refresh_folder))
+
+        # Bouton unique de sélection/suppression
         self.select_btn = QPushButton()
-        self.select_btn.setIcon(QIcon("assets/icons/check2-all.svg"))
+        self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
         self.select_btn.setIconSize(QSize(32, 32))
         self.select_btn.setFixedSize(48, 48)
         self.select_btn.setStyleSheet(
@@ -800,45 +888,13 @@ class FolderViewPage(QWidget):
             """
         )
         self.select_btn.setToolTip("Sélectionner des fichiers")
-        self.select_btn.clicked.connect(self.toggle_selection_mode)
-        self.select_btn.hide()  # Caché par défaut
+        self.select_btn.clicked.connect(self.on_select_btn_clicked)
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(12)
         shadow.setColor(QColor(0, 0, 0, 200))
         shadow.setOffset(0, 3)
         self.select_btn.setGraphicsEffect(shadow)
-
-        def make_header_btn(icon_path, tooltip, callback):
-            btn = QPushButton()
-            btn.setIcon(QIcon(icon_path))
-            btn.setIconSize(QSize(32, 32))
-            btn.setFixedSize(48, 48)
-            btn.setStyleSheet(
-                """
-            QPushButton {
-                    background: rgba(0,0,0,0.45);
-                    border-radius: 24px;
-                border: none;
-            }
-            QPushButton:hover {
-                    background: #95a5a6;
-                    color: #222;
-                }
-                """
-            )
-            btn.setToolTip(tooltip)
-            btn.clicked.connect(callback)
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(12)
-            shadow.setColor(QColor(0, 0, 0, 200))
-            shadow.setOffset(0, 3)
-            btn.setGraphicsEffect(shadow)
-            return btn
-        right_col.addWidget(make_header_btn("assets/icons/arrow-left-white.png", "Retour", self.navigate_back))
-        right_col.addWidget(make_header_btn("assets/icons/palette-white.svg", "Changer la bannière", self.set_header_background))
-        right_col.addWidget(make_header_btn("assets/icons/arrow-clockwise-white.svg", "Rafraîchir", self.refresh_folder))
-        right_col.addWidget(make_header_btn("assets/icons/check2-all-white.png", "Sélectionner", self.toggle_selection_mode))
-        right_col.addWidget(self.select_btn)  # Ajouter le bouton de sélection
+        right_col.addWidget(self.select_btn)
         header_layout.addLayout(right_col)
 
         layout.addWidget(self.header_widget)
@@ -868,6 +924,22 @@ class FolderViewPage(QWidget):
         central_layout.addLayout(right_col, 3)
 
         layout.addLayout(central_layout)
+
+    def on_select_btn_clicked(self):
+        if self.select_btn.icon().name() == "trash-white.svg" or (self.selection_mode and self.selected_items):
+            # Supprimer la sélection
+            for p in list(self.selected_items):
+                base_name = os.path.basename(p)
+                self.session_hidden_files.add(base_name)
+            self.selected_items.clear()
+            self.selection_mode = False
+            self.refresh_view()
+        else:
+            # Activer/désactiver le mode sélection
+            self.selection_mode = not self.selection_mode
+            if not self.selection_mode:
+                self.selected_items.clear()
+            self.refresh_view()
 
     def navigate_back(self):
         """Gère la navigation retour dans les dossiers."""
@@ -1088,6 +1160,7 @@ class FolderViewPage(QWidget):
                         self.selected_items.add(p)
                     else:
                         self.selected_items.discard(p)
+                    # Mise à jour dynamique du bouton select_btn
                     if self.selected_items:
                         self.select_btn.setIcon(QIcon("assets/icons/trash-white.svg"))
                         self.select_btn.setToolTip("Supprimer la sélection")
@@ -1584,7 +1657,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PAKU - Manga PDF Reader")
         self.setGeometry(100, 100, 1400, 900)
         self.setStyleSheet("background-color: #f6fafd;")
-        self.setWindowIcon(QIcon("assets/images/logo.png"))
+        self.setWindowIcon(QIcon(resource_path("assets/images/logo.png")))
 
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
@@ -1826,23 +1899,31 @@ def create_default_thumbnail():
         return None
 
 def get_thumbnail_path(file_path=None, folder_path=None):
+    """Retourne le chemin de la vignette pour un fichier ou dossier"""
     try:
         if folder_path:
-            # ... code pour le dossier ...
-            return thumb_path
-        # Ici, PAS de else: mais le code pour le fichier
-        base = os.path.splitext(os.path.basename(file_path))[0]
-        thumb_dir = os.path.join(os.path.dirname(file_path), '.thumbnails')
-        thumb_path = os.path.join(thumb_dir, base + '.png')
-        if os.path.exists(thumb_path):
-            print(f"Vignette locale trouvée: {thumb_path}")
-            return thumb_path
-        folder_thumb = os.path.join(thumb_dir, '_folder_thumb.png')
-        if os.path.exists(folder_thumb):
-            print(f"Vignette dossier trouvée: {folder_thumb}")
-            return folder_thumb
-        print(f"Aucune vignette trouvée pour {file_path}")
-        return None
+            thumb_dir = os.path.join(folder_path, '.thumbnails')
+            thumb_path = os.path.join(thumb_dir, '_folder_thumb.png')
+            print(f"[DEBUG] Test vignette dossier: {thumb_path}")
+            if os.path.exists(thumb_path):
+                print(f"[DEBUG] Vignette trouvée: {thumb_path}")
+                return thumb_path
+            print(f"[DEBUG] Vignette non trouvée: {thumb_path}")
+            return None
+        else:
+            base = os.path.splitext(os.path.basename(file_path))[0]
+            thumb_dir = os.path.join(os.path.dirname(file_path), '.thumbnails')
+            thumb_path = os.path.join(thumb_dir, base + '.png')
+            print(f"[DEBUG] Test vignette fichier: {thumb_path}")
+            if os.path.exists(thumb_path):
+                print(f"[DEBUG] Vignette locale trouvée: {thumb_path}")
+                return thumb_path
+            folder_thumb = os.path.join(thumb_dir, '_folder_thumb.png')
+            if os.path.exists(folder_thumb):
+                print(f"[DEBUG] Vignette dossier trouvée: {folder_thumb}")
+                return folder_thumb
+            print(f"[DEBUG] Aucune vignette trouvée pour {file_path}")
+            return None
     except Exception as e:
         print(f"Erreur get_thumbnail_path: {e}")
         return None
