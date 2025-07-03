@@ -33,32 +33,6 @@ A modern, offline manga and PDF reader with a beautiful, responsive interface an
 - **Ctrl -**: Zoom out
 - **Ctrl 0**: Reset zoom
 
-## How to Run
-
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Launch the application:
-   ```bash
-   python main.py
-   ```
-
-## Build a Standalone Executable (Windows)
-
-You can generate a standalone `.exe` with all assets and a custom icon:
-
-1. Make sure you have [PyInstaller](https://pyinstaller.org/) installed:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Run this command in your project folder:
-   ```bash
-   pyinstaller --noconfirm --onefile --windowed --icon=assets/images/logo.ico --add-data "assets;assets" --add-data "styles;styles" main.py
-   ```
-   - The executable will be in the `dist/` folder.
-   - All images, icons, and fonts will be included and displayed correctly.
-
 ## Dependencies
 
 - **PySide6**: Qt GUI
