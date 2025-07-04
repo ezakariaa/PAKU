@@ -56,7 +56,7 @@ You can download the latest Windows executable from the [Releases](https://githu
 
 ### How to use the release
 1. Go to the Releases page and download the file `Paku.exe` (for example, from tag `v1.0.0`).
-2. Double-click `main.exe` to launch the application. No installation required.
+2. Double-click `Paku.exe` to launch the application. No installation required.
 3. All features and assets are included in the executable.
 
 **Note:** If you encounter a warning from Windows SmartScreen, click on "More info" and then "Run anyway". This is normal for new unsigned applications.
