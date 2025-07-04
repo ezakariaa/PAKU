@@ -55,7 +55,7 @@ A modern, offline manga and PDF reader with a beautiful, responsive interface an
 You can download the latest Windows executable from the [Releases](https://github.com/your-username/your-repo/releases) page on GitHub.
 
 ### How to use the release
-1. Go to the Releases page and download the file `main.exe` (for example, from tag `v1.0.0`).
+1. Go to the Releases page and download the file `Paku.exe` (for example, from tag `v1.0.0`).
 2. Double-click `main.exe` to launch the application. No installation required.
 3. All features and assets are included in the executable.
 
