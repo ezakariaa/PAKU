@@ -627,10 +627,7 @@ class BookShelfPage(QWidget):
                 def on_folder_selected(p=path):
                     print(f"[DEBUG] Signal folder_selected émis avec : {p}")
                     self.folder_selected.emit(p)
-                vignette.clicked.connect(on_folder_selected)
-                vignette.remove_requested.connect(self.remove_folder)
-                vignette.alias_requested.connect(self.set_folder_alias)
-                vignette.cover_requested.connect(self.set_folder_cover)
+                
                 # Ajout case à cocher si mode sélection
                 if self.selection_mode:
                     from PySide6.QtWidgets import QCheckBox
@@ -652,6 +649,9 @@ class BookShelfPage(QWidget):
                     checkbox.stateChanged.connect(on_state_changed)
                     vignette = ThumbnailWidget(thumb_path, name, path=path, checkbox=checkbox)
                     vignette.clicked.connect(on_folder_selected)
+                
+                # Connecter les signaux une seule fois
+                vignette.clicked.connect(on_folder_selected)
                 vignette.remove_requested.connect(self.remove_folder)
                 vignette.alias_requested.connect(self.set_folder_alias)
                 vignette.cover_requested.connect(self.set_folder_cover)
