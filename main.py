@@ -201,6 +201,7 @@ class ThumbnailWidget(QWidget):
         self.img_label.clicked.connect(self.clicked)
         info_widget = QWidget()
         info_widget.setFixedWidth(self.thumb_width)
+        info_widget.setMinimumHeight(50)  # Hauteur minimale pour s'adapter aux titres longs
         info_layout = QHBoxLayout() if self.checkbox else QVBoxLayout()
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(4)
@@ -212,6 +213,7 @@ class ThumbnailWidget(QWidget):
             self.title_label = QLabel(self.title_text)
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.title_label.setWordWrap(True)
+            self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
             self.title_label.setStyleSheet(
                 "font-size: 15px; color: #222; margin: 0px; padding: 0px;"
             )
@@ -221,6 +223,7 @@ class ThumbnailWidget(QWidget):
             self.title_label = QLabel(self.title_text)
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.title_label.setWordWrap(True)
+            self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
             self.title_label.setStyleSheet(
                 "font-size: 15px; color: #222; margin: 0px; padding: 0px;"
             )
@@ -725,7 +728,8 @@ class BookShelfPage(QWidget):
                 f"Entrez le nouveau nom pour '{current_name}':",
                 text=current_name
             )
-            if ok and new_alias.strip():
+            # Vérifier que l'utilisateur a cliqué sur OK et que le texte n'est pas vide
+            if ok and new_alias and new_alias.strip():
                 # Mettre à jour l'alias
                 entry["alias"] = new_alias.strip()
                 self.save_library()
@@ -1267,7 +1271,8 @@ class FolderViewPage(QWidget):
         else:
             alias_map = {}
         alias, ok = QInputDialog.getText(self, "Set alias", "Nouveau nom :", text=current_name)
-        if ok and alias.strip():
+        # Vérifier que l'utilisateur a cliqué sur OK et que le texte n'est pas vide
+        if ok and alias and alias.strip():
             alias_map[os.path.basename(path)] = alias.strip()
             try:
                 with open(alias_file, 'w', encoding='utf-8') as f:
