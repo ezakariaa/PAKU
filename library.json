@@ -1,5 +1,8 @@
 [
   {
+    "path": "G:/MANGA/1HP Club"
+  },
+  {
     "path": "G:/MANGA/Bande Dessinée 3 Vierges",
     "alias": "3 Vierges"
   },
@@ -59,6 +62,10 @@
     "path": "G:/MANGA/Charlotte’s Wheel"
   },
   {
+    "path": "G:/MANGA/Child Of Hazard [Fr]",
+    "alias": "Child Of Hazard"
+  },
+  {
     "path": "G:/MANGA/Bande Dessinée Coluche",
     "alias": "Coluche"
   },
@@ -69,7 +76,8 @@
     "path": "G:/MANGA/Doron Dororon"
   },
   {
-    "path": "G:/MANGA/Dragon Ball"
+    "path": "G:/MANGA/Dragon Ball",
+    "alias": "Dragon Ball"
   },
   {
     "path": "G:/MANGA/Dragon Ball (Colored)"
@@ -145,7 +153,8 @@
     "path": "G:/MANGA/Jujutsu Kaisen"
   },
   {
-    "path": "G:/MANGA/Kamen Byôtô"
+    "path": "G:/MANGA/Kamen Byôtô",
+    "alias": "Kamen Byôutôu"
   },
   {
     "path": "G:/MANGA/Lara Croft And The Frozen Omen"
@@ -200,12 +209,15 @@
     "path": "G:/MANGA/Yomotsuhegui"
   },
   {
+    "path": "G:/MANGA/Yomotsuhegui – Le fruit du royaume des morts"
+  },
+  {
     "path": "G:/MANGA/Übermensch"
   },
   {
-    "path": "G:/MANGA/Child Of Hazard [Fr]"
+    "path": "G:/MANGA/Astro Baby"
   },
   {
-    "path": "G:/MANGA/Yomotsuhegui – Le fruit du royaume des morts"
+    "path": "G:/MANGA/De Grâce"
   }
 ]

@@ -303,6 +303,108 @@ class ThumbnailWidget(QWidget):
                             print(f"Erreur lors de la génération de la couverture originale : {e}")
                 original_cover_action = menu.addAction("Original Cover")
                 original_cover_action.triggered.connect(set_original_cover)
+                
+
+            
+            # Ajouter l'option Download Cover pour tous les éléments (dossiers et fichiers)
+            def download_cover_from_anilist_for_all():
+                # Fonction pour récupérer l'alias d'un dossier
+                def get_folder_alias(folder_path):
+                    try:
+                        # Chercher dans la bibliothèque principale
+                        if os.path.exists(LIBRARY_FILE):
+                            with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
+                                library = json.load(f)
+                            for entry in library:
+                                if entry["path"] == folder_path:
+                                    return entry.get("alias")
+                    except Exception as e:
+                        print(f"Erreur lecture alias bibliothèque : {e}")
+                    return None
+                
+                # Fonction pour récupérer l'alias d'un fichier
+                def get_file_alias(file_path):
+                    parent_dir = os.path.dirname(file_path)
+                    alias_file = os.path.join(parent_dir, '.alias.json')
+                    if os.path.exists(alias_file):
+                        try:
+                            with open(alias_file, 'r', encoding='utf-8') as f:
+                                alias_map = json.load(f)
+                            return alias_map.get(os.path.basename(file_path))
+                        except Exception as e:
+                            print(f"Erreur lecture alias fichier : {e}")
+                    return None
+                
+                if os.path.isdir(self.path):
+                    # Pour les dossiers, utiliser l'alias si disponible, sinon le nom du dossier
+                    alias = get_folder_alias(self.path)
+                    manga_name = alias if alias else os.path.basename(self.path)
+                    target_path = self.path
+                else:
+                    # Pour les fichiers, utiliser l'alias si disponible, sinon le nom du fichier
+                    alias = get_file_alias(self.path)
+                    if alias:
+                        manga_name = alias
+                    else:
+                        manga_name = os.path.splitext(os.path.basename(self.path))[0]
+                    target_path = os.path.dirname(self.path)
+                
+                print(f"[DEBUG] Tentative de téléchargement de couverture pour : {manga_name}")
+                
+                # Récupérer les informations depuis AniList
+                info = fetch_anilist_info(manga_name)
+                if info and info.get('cover'):
+                    cover_url = info['cover']
+                    thumb_dir = os.path.join(target_path, '.thumbnails')
+                    try:
+                        os.makedirs(thumb_dir, exist_ok=True)
+                    except OSError as e:
+                        print(f"Impossible de créer le dossier de vignettes : {thumb_dir}. Erreur : {e}")
+                        return
+                    
+                    if os.path.isdir(self.path):
+                        # Pour les dossiers, sauvegarder comme _folder_thumb.png
+                        cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                    else:
+                        # Pour les fichiers, sauvegarder avec le nom du fichier
+                        base_name = os.path.splitext(os.path.basename(self.path))[0]
+                        cover_path = os.path.join(thumb_dir, base_name + '.png')
+                    
+                    try:
+                        resp = requests.get(cover_url, timeout=10)
+                        if resp.status_code == 200:
+                            with open(cover_path, 'wb') as imgf:
+                                imgf.write(resp.content)
+                            print(f"[DEBUG] Couverture téléchargée : {cover_path}")
+                            # Rafraîchir la vignette
+                            self.update_thumbnail(cover_path)
+                            
+                            # Afficher un message de confirmation
+                            from PySide6.QtWidgets import QMessageBox
+                            QMessageBox.information(None, "Succès", f"Couverture téléchargée pour {manga_name}")
+                            
+                            # Sauvegarder les informations AniList si pas déjà fait
+                            anilist_file = os.path.join(target_path, '.anilist.json')
+                            if not os.path.exists(anilist_file):
+                                try:
+                                    with open(anilist_file, 'w', encoding='utf-8') as f:
+                                        json.dump(info, f, ensure_ascii=False, indent=2)
+                                    print(f"[DEBUG] Informations AniList sauvegardées")
+                                except Exception as e:
+                                    print(f"[DEBUG] Erreur sauvegarde AniList : {e}")
+                        else:
+                            print(f"[DEBUG] Erreur téléchargement couverture : {resp.status_code}")
+                    except Exception as e:
+                        print(f"[DEBUG] Exception téléchargement couverture : {e}")
+                else:
+                    print(f"[DEBUG] Aucune couverture trouvée pour : {manga_name}")
+                    # Afficher un message d'erreur
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList")
+            
+            download_cover_action = menu.addAction("Download Cover")
+            download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
+            
             explorer_action = menu.addAction("Open in Explorer")
             explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
             remove_action = menu.addAction("Remove from bookshelf")
