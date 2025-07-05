@@ -27,6 +27,9 @@
     "alias": "Asterix V2"
   },
   {
+    "path": "G:/MANGA/Astro Baby"
+  },
+  {
     "path": "G:/MANGA/Berserk"
   },
   {
@@ -70,7 +73,13 @@
     "alias": "Coluche"
   },
   {
+    "path": "G:/MANGA/De Grâce"
+  },
+  {
     "path": "G:/MANGA/Detective Conan"
+  },
+  {
+    "path": "G:/MANGA/Detective Conan Magician of the Silver Sky"
   },
   {
     "path": "G:/MANGA/Doron Dororon"
@@ -80,7 +89,8 @@
     "alias": "Dragon Ball"
   },
   {
-    "path": "G:/MANGA/Dragon Ball (Colored)"
+    "path": "G:/MANGA/Dragon Ball (Colored)",
+    "alias": "Dragon Ball (Official Colored)"
   },
   {
     "path": "G:/MANGA/Dragon Ball - DBSP (Doujinshi)"
@@ -215,9 +225,6 @@
     "path": "G:/MANGA/Übermensch"
   },
   {
-    "path": "G:/MANGA/Astro Baby"
-  },
-  {
-    "path": "G:/MANGA/De Grâce"
+    "path": "G:/MANGA/Fullmetal Alchemist (Webtoon Official)"
   }
 ]
