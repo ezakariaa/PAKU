@@ -153,8 +153,20 @@
     "path": "G:/MANGA/Fullmetal Alchemist"
   },
   {
+    "path": "G:/MANGA/Fullmetal Alchemist (Webtoon Official)"
+  },
+  {
     "path": "G:/MANGA/Bande Dessinée Gainsbourg",
     "alias": "Gainsbourg"
+  },
+  {
+    "path": "G:/MANGA/Guns and Roses"
+  },
+  {
+    "path": "G:/MANGA/HEAD☆SHOT"
+  },
+  {
+    "path": "G:/MANGA/Hero Proxy Ninja"
   },
   {
     "path": "G:/MANGA/Iznogoud"
@@ -222,9 +234,10 @@
     "path": "G:/MANGA/Yomotsuhegui – Le fruit du royaume des morts"
   },
   {
-    "path": "G:/MANGA/Übermensch"
+    "path": "G:/MANGA/Übermensch",
+    "alias": "Übermensch"
   },
   {
-    "path": "G:/MANGA/Fullmetal Alchemist (Webtoon Official)"
+    "path": "G:/MANGA/Shuumatsu No Valkyrie Kitan – Jack The Ripper No Jikenbo"
   }
 ]

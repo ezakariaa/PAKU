@@ -351,8 +351,8 @@ class ThumbnailWidget(QWidget):
                 
                 print(f"[DEBUG] Tentative de téléchargement de couverture pour : {manga_name}")
                 
-                # Récupérer les informations depuis AniList
-                info = fetch_anilist_info(manga_name)
+                # Récupérer les informations depuis AniList puis MangaDex si pas trouvé
+                info = fetch_manga_info(manga_name)
                 if info and info.get('cover'):
                     cover_url = info['cover']
                     thumb_dir = os.path.join(target_path, '.thumbnails')
@@ -389,18 +389,29 @@ class ThumbnailWidget(QWidget):
                                 try:
                                     with open(anilist_file, 'w', encoding='utf-8') as f:
                                         json.dump(info, f, ensure_ascii=False, indent=2)
-                                    print(f"[DEBUG] Informations AniList sauvegardées")
+                                    print(f"[DEBUG] Informations API sauvegardées")
                                 except Exception as e:
-                                    print(f"[DEBUG] Erreur sauvegarde AniList : {e}")
+                                    print(f"[DEBUG] Erreur sauvegarde API : {e}")
                         else:
                             print(f"[DEBUG] Erreur téléchargement couverture : {resp.status_code}")
+                            if resp.status_code == 404:
+                                print(f"[DEBUG] Couverture introuvable sur le serveur : {cover_url}")
+                            # Afficher un message d'erreur spécifique
+                            from PySide6.QtWidgets import QMessageBox
+                            if resp.status_code == 404:
+                                QMessageBox.warning(None, "Couverture introuvable", f"La couverture pour {manga_name} n'est plus disponible sur le serveur")
+                            else:
+                                QMessageBox.warning(None, "Erreur de téléchargement", f"Impossible de télécharger la couverture pour {manga_name} (Erreur {resp.status_code})")
                     except Exception as e:
                         print(f"[DEBUG] Exception téléchargement couverture : {e}")
+                        # Afficher un message d'erreur pour les exceptions réseau
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.warning(None, "Erreur réseau", f"Erreur de connexion lors du téléchargement de la couverture pour {manga_name}")
                 else:
                     print(f"[DEBUG] Aucune couverture trouvée pour : {manga_name}")
                     # Afficher un message d'erreur
                     from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList")
+                    QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList ou MangaDex")
             
             download_cover_action = menu.addAction("Download Cover")
             download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
@@ -645,17 +656,17 @@ class BookShelfPage(QWidget):
                 self.library.append({"path": folder_path})
                 self.save_library()
                 self.refresh_shelf()
-                # --- Récupération automatique AniList ---
+                # --- Récupération automatique AniList/MangaDex ---
                 manga_name = os.path.basename(folder_path)
-                print(f"[DEBUG AniList] Tentative de récupération pour : {manga_name}")
-                info = fetch_anilist_info(manga_name)
+                print(f"[DEBUG API] Tentative de récupération pour : {manga_name}")
+                info = fetch_manga_info(manga_name)
                 if info:
-                    print(f"[DEBUG AniList] Succès, création de .anilist.json")
+                    print(f"[DEBUG API] Succès, création de .anilist.json")
                     import json
                     try:
                         with open(os.path.join(folder_path, '.anilist.json'), 'w', encoding='utf-8') as f:
                             json.dump(info, f, ensure_ascii=False, indent=2)
-                        # Télécharger la bannière AniList comme header si elle existe
+                        # Télécharger la bannière si elle existe (AniList uniquement)
                         banner_url = info.get('banner')
                         if banner_url:
                             import requests
@@ -671,12 +682,12 @@ class BookShelfPage(QWidget):
                                 if resp.status_code == 200:
                                     with open(banner_path, 'wb') as imgf:
                                         imgf.write(resp.content)
-                                    print(f"[DEBUG AniList] Bannière téléchargée : {banner_path}")
+                                    print(f"[DEBUG API] Bannière téléchargée : {banner_path}")
                                 else:
-                                    print(f"[DEBUG AniList] Erreur téléchargement bannière : {resp.status_code}")
+                                    print(f"[DEBUG API] Erreur téléchargement bannière : {resp.status_code}")
                             except Exception as e:
-                                print(f"[DEBUG AniList] Exception téléchargement bannière : {e}")
-                        # Télécharger la couverture AniList comme vignette du dossier
+                                print(f"[DEBUG API] Exception téléchargement bannière : {e}")
+                        # Télécharger la couverture comme vignette du dossier
                         cover_url = info.get('cover')
                         if cover_url:
                             import requests
@@ -692,15 +703,15 @@ class BookShelfPage(QWidget):
                                 if resp.status_code == 200:
                                     with open(thumb_path, 'wb') as imgf:
                                         imgf.write(resp.content)
-                                    print(f"[DEBUG AniList] Vignette téléchargée : {thumb_path}")
+                                    print(f"[DEBUG API] Vignette téléchargée : {thumb_path}")
                                 else:
-                                    print(f"[DEBUG AniList] Erreur téléchargement vignette : {resp.status_code}")
+                                    print(f"[DEBUG API] Erreur téléchargement vignette : {resp.status_code}")
                             except Exception as e:
-                                print(f"[DEBUG AniList] Exception téléchargement vignette : {e}")
+                                print(f"[DEBUG API] Exception téléchargement vignette : {e}")
                     except Exception as e:
-                        print(f"[DEBUG AniList] Erreur lors de l'écriture du fichier : {e}")
+                        print(f"[DEBUG API] Erreur lors de l'écriture du fichier : {e}")
                 else:
-                    print(f"[DEBUG AniList] Aucun résultat pour : {manga_name}")
+                    print(f"[DEBUG API] Aucun résultat pour : {manga_name}")
             except OSError as e:
                 error_msg = (f"Impossible d'accéder au dossier ou de créer le répertoire des vignettes.\n\n"
                              f"Vérifiez que le disque est bien connecté et que vous avez les droits d'écriture.\n\n"
@@ -1900,10 +1911,10 @@ def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
                                         first_file_found = file_path
             except Exception as e:
                 print(f"Erreur vignette {file_path}: {e}")
-        # Récupération de la couverture AniList pour ce fichier
+        # Récupération de la couverture depuis les APIs pour ce fichier
         if not os.path.exists(anilist_thumb_path):
             manga_name = os.path.splitext(file)[0]
-            info = fetch_anilist_info(manga_name)
+            info = fetch_manga_info(manga_name)
             if info and info.get('cover'):
                 cover_url = info['cover']
                 try:
@@ -1911,11 +1922,11 @@ def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
                     if resp.status_code == 200:
                         with open(anilist_thumb_path, 'wb') as imgf:
                             imgf.write(resp.content)
-                        print(f"[DEBUG AniList] Vignette AniList téléchargée pour {file}: {anilist_thumb_path}")
+                        print(f"[DEBUG API] Vignette téléchargée pour {file}: {anilist_thumb_path}")
                     else:
-                        print(f"[DEBUG AniList] Erreur téléchargement vignette fichier {file}: {resp.status_code}")
+                        print(f"[DEBUG API] Erreur téléchargement vignette fichier {file}: {resp.status_code}")
                 except Exception as e:
-                    print(f"[DEBUG AniList] Exception téléchargement vignette fichier {file}: {e}")
+                    print(f"[DEBUG API] Exception téléchargement vignette fichier {file}: {e}")
 
     # Générer la vignette du dossier à partir du premier fichier trouvé (archive, PDF ou image)
     file_for_folder_thumb = None
@@ -2082,6 +2093,90 @@ def fetch_anilist_info(manga_title):
                 }
     except Exception as e:
         print(f"Erreur AniList: {e}")
+    return None
+
+def fetch_mangadex_info(manga_title):
+    """Recherche les informations d'un manga sur MangaDex"""
+    url = 'https://api.mangadex.org/manga'
+    params = {
+        'title': manga_title,
+        'limit': 5,
+        'includes[]': ['cover_art']
+    }
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('data'):
+                # Prendre le premier résultat
+                manga = data['data'][0]
+                manga_id = manga['id']
+                
+                # Récupérer les détails complets du manga
+                detail_url = f'https://api.mangadex.org/manga/{manga_id}'
+                detail_response = requests.get(detail_url, timeout=10)
+                if detail_response.status_code == 200:
+                    detail_data = detail_response.json()
+                    manga_detail = detail_data['data']
+                    
+                    # Récupérer la couverture avec vérification
+                    cover_url = None
+                    if 'relationships' in manga_detail:
+                        for rel in manga_detail['relationships']:
+                            if rel['type'] == 'cover_art':
+                                cover_id = rel['id']
+                                cover_url = f"https://uploads.mangadex.org/covers/{manga_id}/{cover_id}.jpg"
+                                
+                                # Vérifier que l'URL de la couverture fonctionne
+                                try:
+                                    cover_response = requests.head(cover_url, timeout=5)
+                                    if cover_response.status_code != 200:
+                                        print(f"[DEBUG MangaDex] URL couverture invalide: {cover_url}")
+                                        cover_url = None
+                                        continue
+                                    else:
+                                        print(f"[DEBUG MangaDex] URL couverture valide: {cover_url}")
+                                        break
+                                except Exception as e:
+                                    print(f"[DEBUG MangaDex] Erreur vérification couverture: {e}")
+                                    cover_url = None
+                                    continue
+                    
+                    # Récupérer les tags
+                    tags = []
+                    if 'attributes' in manga_detail:
+                        attrs = manga_detail['attributes']
+                        if 'tags' in attrs:
+                            tags = [tag['attributes']['name']['en'] for tag in attrs['tags']]
+                    
+                    return {
+                        'title': manga_detail['attributes']['title'].get('en', manga_title),
+                        'description': manga_detail['attributes'].get('description', {}).get('en', ''),
+                        'tags': tags,
+                        'genres': tags,  # MangaDex utilise des tags pour les genres
+                        'cover': cover_url,
+                        'banner': None  # MangaDex n'a pas de bannière
+                    }
+    except Exception as e:
+        print(f"Erreur MangaDex: {e}")
+    return None
+
+def fetch_manga_info(manga_title):
+    """Recherche les informations d'un manga sur AniList puis MangaDex si pas trouvé"""
+    # Essayer d'abord AniList
+    info = fetch_anilist_info(manga_title)
+    if info and info.get('cover'):
+        print(f"[DEBUG] Couverture trouvée sur AniList pour : {manga_title}")
+        return info
+    
+    # Si pas trouvé sur AniList, essayer MangaDex
+    print(f"[DEBUG] Pas trouvé sur AniList, essai MangaDex pour : {manga_title}")
+    info = fetch_mangadex_info(manga_title)
+    if info and info.get('cover'):
+        print(f"[DEBUG] Couverture trouvée sur MangaDex pour : {manga_title}")
+        return info
+    
+    print(f"[DEBUG] Aucune couverture trouvée pour : {manga_title}")
     return None
 
 def main():
