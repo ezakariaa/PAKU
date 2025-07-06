@@ -10,7 +10,7 @@ OutputDir=.
 OutputBaseFilename=PAKU-Setup
 Compression=lzma
 SolidCompression=yes
-; SetupIconFile=assets\images\logo.ico
+SetupIconFile=assets\images\logo.ico
 
 [Files]
 Source: "dist\\*"; DestDir: "{app}"; Flags: recursesubdirs

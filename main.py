@@ -111,6 +111,7 @@ class RoundedHeaderWidget(QWidget):
 class HomePage(QWidget):
     open_bookshelf = Signal()
     open_file_dialog = Signal()
+    open_online_library = Signal()
     def __init__(self):
         super().__init__()
         self.setup_ui()
@@ -127,19 +128,32 @@ class HomePage(QWidget):
         subtitle.setFont(QFont("Inter", 14))
         subtitle.setStyleSheet("color: #444; margin-bottom: 20px;")
         layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(20)
+        
+        # Première ligne de boutons
+        btn_layout1 = QHBoxLayout()
+        btn_layout1.setSpacing(20)
         open_btn = QPushButton("OPEN FILE")
         open_btn.setFixedSize(200, 80)
         open_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
         open_btn.clicked.connect(self.open_file_dialog.emit)
-        btn_layout.addWidget(open_btn)
+        btn_layout1.addWidget(open_btn)
         bookshelf_btn = QPushButton("BOOKSHELF")
         bookshelf_btn.setFixedSize(200, 80)
         bookshelf_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
         bookshelf_btn.clicked.connect(self.open_bookshelf.emit)
-        btn_layout.addWidget(bookshelf_btn)
-        layout.addLayout(btn_layout)
+        btn_layout1.addWidget(bookshelf_btn)
+        layout.addLayout(btn_layout1)
+        
+        # Deuxième ligne de boutons
+        btn_layout2 = QHBoxLayout()
+        btn_layout2.setSpacing(20)
+        online_btn = QPushButton("🌐 ONLINE LIBRARY")
+        online_btn.setFixedSize(200, 80)
+        online_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
+        online_btn.clicked.connect(self.open_online_library.emit)
+        btn_layout2.addWidget(online_btn)
+        layout.addLayout(btn_layout2)
+        
         bmc_btn = QPushButton('☕ Buy me a coffee')
         bmc_btn.setStyleSheet(BMC_BUTTON_STYLE)
         bmc_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.buymeacoffee.com/ezakaria')))
@@ -415,6 +429,77 @@ class ThumbnailWidget(QWidget):
             
             download_cover_action = menu.addAction("Download Cover")
             download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
+            
+            # Ajouter l'option Cover From My Computer
+            def cover_from_computer():
+                if not self.path:
+                    return
+                
+                # Ouvrir le sélecteur de fichier pour choisir une image
+                from PySide6.QtWidgets import QFileDialog
+                image_path, _ = QFileDialog.getOpenFileName(
+                    None,
+                    "Choisir une image de couverture",
+                    "",
+                    "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+                )
+                
+                if image_path and os.path.exists(image_path):
+                    try:
+                        # Déterminer le chemin de destination
+                        if os.path.isdir(self.path):
+                            # Pour les dossiers, sauvegarder comme _folder_thumb.png
+                            target_path = self.path
+                            thumb_dir = os.path.join(target_path, '.thumbnails')
+                            cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                        else:
+                            # Pour les fichiers, sauvegarder avec le nom du fichier
+                            target_path = os.path.dirname(self.path)
+                            thumb_dir = os.path.join(target_path, '.thumbnails')
+                            base_name = os.path.splitext(os.path.basename(self.path))[0]
+                            cover_path = os.path.join(thumb_dir, base_name + '.png')
+                        
+                        # Créer le dossier de vignettes si nécessaire
+                        os.makedirs(thumb_dir, exist_ok=True)
+                        
+                        # Charger et redimensionner l'image
+                        pixmap = QPixmap(image_path)
+                        if not pixmap.isNull():
+                            # Redimensionner à la taille standard des vignettes (400x560)
+                            scaled_pixmap = pixmap.scaled(
+                                400, 560, 
+                                Qt.AspectRatioMode.KeepAspectRatio, 
+                                Qt.TransformationMode.SmoothTransformation
+                            )
+                            scaled_pixmap.save(cover_path, "PNG", quality=95)
+                            
+                            # Rafraîchir la vignette
+                            self.update_thumbnail(cover_path)
+                            
+                            # Afficher un message de confirmation
+                            from PySide6.QtWidgets import QMessageBox
+                            QMessageBox.information(
+                                None, 
+                                "Succès", 
+                                f"Couverture personnalisée ajoutée avec succès"
+                            )
+                        else:
+                            QMessageBox.warning(
+                                None, 
+                                "Erreur", 
+                                "Impossible de charger l'image sélectionnée"
+                            )
+                    except Exception as e:
+                        print(f"[DEBUG] Erreur lors de l'ajout de la couverture : {e}")
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.warning(
+                            None, 
+                            "Erreur", 
+                            f"Erreur lors de l'ajout de la couverture : {e}"
+                        )
+            
+            cover_from_computer_action = menu.addAction("Cover From My Computer")
+            cover_from_computer_action.triggered.connect(cover_from_computer)
             
             explorer_action = menu.addAction("Open in Explorer")
             explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
@@ -1767,6 +1852,408 @@ class FileViewerPage(QWidget):
         super().closeEvent(event)
 
 # =====================================================================================
+# PAGE BIBLIOTHEQUE EN LIGNE
+# =====================================================================================
+class OnlineLibraryPage(QWidget):
+    manga_selected = Signal(str, str)  # manga_id, manga_title
+    back_clicked = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.manga_list = []
+        self.current_page = 0
+        self.total_pages = 0
+        self.search_query = ""
+        self.grid_view = ResponsiveGridView()
+        self.setup_ui()
+        self.load_popular_manga()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header avec image de fond
+        header_widget = RoundedHeaderWidget()
+        header_widget.setFixedHeight(80)
+        header_widget.set_background_image(resource_path('assets/images/header.png'))
+
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(20, 20, 20, 20)
+
+        # Titre
+        title = QLabel("Online Library")
+        title.setFont(QFont("Inter", 32, QFont.Weight.Bold))
+        title.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        header.addWidget(title)
+        header.addStretch()
+
+        # Barre d'outils
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+
+        # Bouton retour
+        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
+        toolbar.addWidget(back_btn)
+
+        # Barre de recherche
+        self.search_field = QLineEdit()
+        self.search_field.setPlaceholderText("Rechercher un manga...")
+        self.search_field.setFixedWidth(300)
+        self.search_field.textChanged.connect(self.on_search_changed)
+        toolbar.addWidget(self.search_field)
+
+        # Bouton de recherche
+        search_btn = make_header_btn(resource_path("assets/icons/search-white.svg"), "Rechercher", self.search_manga)
+        toolbar.addWidget(search_btn)
+
+        # Bouton populaire
+        popular_btn = make_header_btn(resource_path("assets/icons/sort-alpha-down-white.svg"), "Populaire", self.load_popular_manga)
+        toolbar.addWidget(popular_btn)
+
+        header.addLayout(toolbar)
+        header.addSpacing(20)
+        
+        layout.addWidget(header_widget)
+        layout.addWidget(self.grid_view)
+
+    def on_search_changed(self):
+        """Déclenche la recherche après un délai"""
+        self.search_query = self.search_field.text().strip()
+        if hasattr(self, 'search_timer'):
+            self.search_timer.stop()
+        else:
+            from PySide6.QtCore import QTimer
+            self.search_timer = QTimer()
+            self.search_timer.setSingleShot(True)
+            self.search_timer.timeout.connect(self.search_manga)
+        self.search_timer.start(500)  # 500ms de délai
+
+    def search_manga(self):
+        """Recherche des mangas sur MangaDex"""
+        if not self.search_query:
+            self.load_popular_manga()
+            return
+
+        try:
+            url = 'https://api.mangadex.org/manga'
+            params = {
+                'title': self.search_query,
+                'limit': 50,
+                'includes[]': ['cover_art']
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                self.manga_list = data.get('data', [])
+                self.display_manga_list()
+            else:
+                print(f"Erreur recherche: {response.status_code}")
+        except Exception as e:
+            print(f"Erreur lors de la recherche: {e}")
+
+    def load_popular_manga(self):
+        """Charge les mangas populaires"""
+        try:
+            url = 'https://api.mangadex.org/manga'
+            params = {
+                'order[followedCount]': 'desc',
+                'limit': 50,
+                'includes[]': ['cover_art']
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                self.manga_list = data.get('data', [])
+                self.display_manga_list()
+            else:
+                print(f"Erreur chargement populaire: {response.status_code}")
+        except Exception as e:
+            print(f"Erreur lors du chargement des mangas populaires: {e}")
+
+    def display_manga_list(self):
+        """Affiche la liste des mangas"""
+        widgets = []
+        
+        for manga in self.manga_list:
+            manga_id = manga['id']
+            manga_data = manga['attributes']
+            title = manga_data['title'].get('en', 'Sans titre')
+            
+            # Récupérer la couverture
+            cover_url = None
+            if 'relationships' in manga:
+                for rel in manga['relationships']:
+                    if rel['type'] == 'cover_art':
+                        cover_id = rel['id']
+                        cover_url = f"https://uploads.mangadex.org/covers/{manga_id}/{cover_id}.jpg"
+                        break
+            
+            # Créer une vignette temporaire
+            if cover_url:
+                # Télécharger et sauvegarder la couverture
+                try:
+                    response = requests.get(cover_url, timeout=10)
+                    if response.status_code == 200:
+                        # Créer un dossier temporaire pour les couvertures
+                        temp_dir = os.path.join(os.getcwd(), '.temp_covers')
+                        os.makedirs(temp_dir, exist_ok=True)
+                        cover_path = os.path.join(temp_dir, f"{manga_id}.jpg")
+                        
+                        with open(cover_path, 'wb') as f:
+                            f.write(response.content)
+                        
+                        widget = ThumbnailWidget(cover_path, title, path=manga_id, show_menu=False)
+                    else:
+                        # Utiliser une vignette par défaut
+                        default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
+                        widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
+                except Exception as e:
+                    print(f"Erreur téléchargement couverture: {e}")
+                    default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
+                    widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
+            else:
+                default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
+                widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
+            
+            widget.clicked.connect(lambda checked, mid=manga_id, t=title: self.manga_selected.emit(mid, t))
+            widgets.append(widget)
+        
+        self.grid_view.set_items(widgets)
+
+# =====================================================================================
+# PAGE CHAPITRES MANGA
+# =====================================================================================
+class MangaChaptersPage(QWidget):
+    chapter_selected = Signal(str, str)  # chapter_id, chapter_title
+    back_clicked = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.manga_id = ""
+        self.manga_title = ""
+        self.chapters = []
+        self.grid_view = ResponsiveGridView()
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header
+        header_widget = RoundedHeaderWidget()
+        header_widget.setFixedHeight(80)
+        header_widget.set_background_image(resource_path('assets/images/header.png'))
+
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(20, 20, 20, 20)
+
+        # Titre du manga
+        self.title_label = QLabel()
+        self.title_label.setFont(QFont("Inter", 24, QFont.Weight.Bold))
+        self.title_label.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        header.addWidget(self.title_label)
+        header.addStretch()
+
+        # Bouton retour
+        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
+        header.addWidget(back_btn)
+        header.addSpacing(20)
+        
+        layout.addWidget(header_widget)
+        layout.addWidget(self.grid_view)
+
+    def set_manga(self, manga_id, manga_title):
+        """Définit le manga et charge ses chapitres"""
+        self.manga_id = manga_id
+        self.manga_title = manga_title
+        self.title_label.setText(manga_title)
+        self.load_chapters()
+
+    def load_chapters(self):
+        """Charge les chapitres du manga"""
+        try:
+            url = f'https://api.mangadex.org/manga/{self.manga_id}/feed'
+            params = {
+                'translatedLanguage[]': ['en', 'fr'],
+                'order[chapter]': 'desc',
+                'includes[]': ['scanlation_group']
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                self.chapters = data.get('data', [])
+                self.display_chapters()
+            else:
+                print(f"Erreur chargement chapitres: {response.status_code}")
+        except Exception as e:
+            print(f"Erreur lors du chargement des chapitres: {e}")
+
+    def display_chapters(self):
+        """Affiche la liste des chapitres"""
+        widgets = []
+        
+        for chapter in self.chapters:
+            chapter_id = chapter['id']
+            chapter_data = chapter['attributes']
+            chapter_num = chapter_data.get('chapter', '0')
+            chapter_title = chapter_data.get('title', '')
+            
+            # Créer le titre du chapitre
+            if chapter_title:
+                display_title = f"Chapitre {chapter_num} - {chapter_title}"
+            else:
+                display_title = f"Chapitre {chapter_num}"
+            
+            # Utiliser une vignette par défaut pour les chapitres
+            default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
+            widget = ThumbnailWidget(default_path, display_title, path=chapter_id, show_menu=False)
+            
+            widget.clicked.connect(lambda checked, cid=chapter_id, ct=display_title: self.chapter_selected.emit(cid, ct))
+            widgets.append(widget)
+        
+        self.grid_view.set_items(widgets)
+
+# =====================================================================================
+# PAGE TÉLÉCHARGEMENT CHAPITRE
+# =====================================================================================
+class ChapterDownloadPage(QWidget):
+    download_complete = Signal(str)  # file_path
+    back_clicked = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.chapter_id = ""
+        self.chapter_title = ""
+        self.download_path = ""
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header
+        header_widget = RoundedHeaderWidget()
+        header_widget.setFixedHeight(80)
+        header_widget.set_background_image(resource_path('assets/images/header.png'))
+
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(20, 20, 20, 20)
+
+        # Titre
+        self.title_label = QLabel()
+        self.title_label.setFont(QFont("Inter", 24, QFont.Weight.Bold))
+        self.title_label.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        header.addWidget(self.title_label)
+        header.addStretch()
+
+        # Bouton retour
+        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
+        header.addWidget(back_btn)
+        header.addSpacing(20)
+        
+        layout.addWidget(header_widget)
+
+        # Contenu central
+        central_widget = QWidget()
+        central_layout = QVBoxLayout(central_widget)
+        central_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        central_layout.setSpacing(30)
+
+        # Message d'information
+        info_label = QLabel("Téléchargement en cours...")
+        info_label.setFont(QFont("Inter", 18))
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        central_layout.addWidget(info_label)
+
+        # Barre de progression
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        central_layout.addWidget(self.progress_bar)
+
+        # Bouton d'ouverture
+        self.open_btn = QPushButton("Ouvrir le fichier")
+        self.open_btn.setVisible(False)
+        self.open_btn.clicked.connect(self.open_file)
+        central_layout.addWidget(self.open_btn)
+
+        layout.addWidget(central_widget)
+
+    def set_chapter(self, chapter_id, chapter_title):
+        """Définit le chapitre et commence le téléchargement"""
+        self.chapter_id = chapter_id
+        self.chapter_title = chapter_title
+        self.title_label.setText(chapter_title)
+        self.download_chapter()
+
+    def download_chapter(self):
+        """Télécharge le chapitre"""
+        try:
+            # Récupérer les pages du chapitre
+            url = f'https://api.mangadex.org/at-home/server/{self.chapter_id}'
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                base_url = data['baseUrl']
+                chapter_hash = data['chapter']['hash']
+                
+                # Créer le dossier de téléchargement
+                download_dir = os.path.join(os.getcwd(), 'downloads')
+                os.makedirs(download_dir, exist_ok=True)
+                
+                # Nom du fichier
+                safe_title = "".join(c for c in self.chapter_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                self.download_path = os.path.join(download_dir, f"{safe_title}.cbz")
+                
+                # Télécharger les pages
+                pages = data['chapter']['data']
+                total_pages = len(pages)
+                
+                import zipfile
+                with zipfile.ZipFile(self.download_path, 'w') as zip_file:
+                    for i, page in enumerate(pages):
+                        # Mettre à jour la progression
+                        progress = int((i + 1) / total_pages * 100)
+                        self.progress_bar.setValue(progress)
+                        QApplication.processEvents()
+                        
+                        # Télécharger la page
+                        page_url = f"{base_url}/data/{chapter_hash}/{page}"
+                        page_response = requests.get(page_url, timeout=30)
+                        
+                        if page_response.status_code == 200:
+                            # Déterminer l'extension
+                            if page.endswith('.jpg') or page.endswith('.jpeg'):
+                                ext = '.jpg'
+                            elif page.endswith('.png'):
+                                ext = '.png'
+                            else:
+                                ext = '.jpg'
+                            
+                            # Ajouter au ZIP
+                            zip_file.writestr(f"{i+1:03d}{ext}", page_response.content)
+                
+                # Téléchargement terminé
+                self.progress_bar.setValue(100)
+                self.open_btn.setVisible(True)
+                
+                # Afficher un message de succès
+                QMessageBox.information(self, "Succès", f"Chapitre téléchargé avec succès !\n{self.download_path}")
+                
+            else:
+                QMessageBox.warning(self, "Erreur", f"Impossible de télécharger le chapitre (Erreur {response.status_code})")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors du téléchargement : {e}")
+
+    def open_file(self):
+        """Ouvre le fichier téléchargé"""
+        if self.download_path and os.path.exists(self.download_path):
+            self.download_complete.emit(self.download_path)
+
+# =====================================================================================
 # FENETRE PRINCIPALE (Contrôleur de navigation)
 # =====================================================================================
 class MainWindow(QMainWindow):
@@ -1784,11 +2271,17 @@ class MainWindow(QMainWindow):
         self.bookshelf_page = BookShelfPage()
         self.folder_view_page = FolderViewPage()
         self.pdf_viewer_page = FileViewerPage()
+        self.online_library_page = OnlineLibraryPage()
+        self.manga_chapters_page = MangaChaptersPage()
+        self.chapter_download_page = ChapterDownloadPage()
 
         self.stacked_widget.addWidget(self.home_page)
         self.stacked_widget.addWidget(self.bookshelf_page)
         self.stacked_widget.addWidget(self.folder_view_page)
         self.stacked_widget.addWidget(self.pdf_viewer_page)
+        self.stacked_widget.addWidget(self.online_library_page)
+        self.stacked_widget.addWidget(self.manga_chapters_page)
+        self.stacked_widget.addWidget(self.chapter_download_page)
 
         self.connect_signals()
         self.show_home()
@@ -1796,6 +2289,7 @@ class MainWindow(QMainWindow):
     def connect_signals(self):
         self.home_page.open_bookshelf.connect(self.show_bookshelf)
         self.home_page.open_file_dialog.connect(self.open_file)
+        self.home_page.open_online_library.connect(self.show_online_library)
 
         self.bookshelf_page.folder_selected.connect(self.show_folder_view)
         self.bookshelf_page.add_folder_clicked.connect(self.open_directory)
@@ -1805,6 +2299,16 @@ class MainWindow(QMainWindow):
         self.folder_view_page.back_clicked.connect(self.show_bookshelf)
 
         self.pdf_viewer_page.back_clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.folder_view_page))
+
+        # Signaux pour la bibliothèque en ligne
+        self.online_library_page.manga_selected.connect(self.show_manga_chapters)
+        self.online_library_page.back_clicked.connect(self.show_home)
+
+        self.manga_chapters_page.chapter_selected.connect(self.show_chapter_download)
+        self.manga_chapters_page.back_clicked.connect(self.show_online_library)
+
+        self.chapter_download_page.download_complete.connect(self.open_downloaded_file)
+        self.chapter_download_page.back_clicked.connect(self.show_manga_chapters)
 
     def show_home(self):
         self.folder_view_page.selection_mode = False
@@ -1838,6 +2342,25 @@ class MainWindow(QMainWindow):
         self.folder_view_page.refresh_view()
         self.pdf_viewer_page.load_file(path)
         self.stacked_widget.setCurrentWidget(self.pdf_viewer_page)
+
+    def show_online_library(self):
+        """Affiche la page de la bibliothèque en ligne"""
+        self.stacked_widget.setCurrentWidget(self.online_library_page)
+
+    def show_manga_chapters(self, manga_id, manga_title):
+        """Affiche la page des chapitres d'un manga"""
+        self.manga_chapters_page.set_manga(manga_id, manga_title)
+        self.stacked_widget.setCurrentWidget(self.manga_chapters_page)
+
+    def show_chapter_download(self, chapter_id, chapter_title):
+        """Affiche la page de téléchargement d'un chapitre"""
+        self.chapter_download_page.set_chapter(chapter_id, chapter_title)
+        self.stacked_widget.setCurrentWidget(self.chapter_download_page)
+
+    def open_downloaded_file(self, file_path):
+        """Ouvre le fichier téléchargé dans le lecteur"""
+        if os.path.exists(file_path):
+            self.show_pdf_viewer(file_path)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Ouvrir un fichier", "", "Fichiers supportés (*.pdf *.cbz *.zip *.rar);;PDF Files (*.pdf);;CBZ Files (*.cbz);;ZIP Files (*.zip);;RAR Files (*.rar)")
