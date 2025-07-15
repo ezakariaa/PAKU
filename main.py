@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStackedWidget, QGridLayout, QScrollArea,
     QFileDialog, QMenu, QInputDialog, QDialog, QProgressBar, QMessageBox,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QLineEdit
 )
 from PySide6.QtGui import (
     QFont, QPixmap, QIcon, QImage, QFontDatabase, QPainter, QColor,
@@ -111,7 +111,6 @@ class RoundedHeaderWidget(QWidget):
 class HomePage(QWidget):
     open_bookshelf = Signal()
     open_file_dialog = Signal()
-    open_online_library = Signal()
     def __init__(self):
         super().__init__()
         self.setup_ui()
@@ -144,15 +143,7 @@ class HomePage(QWidget):
         btn_layout1.addWidget(bookshelf_btn)
         layout.addLayout(btn_layout1)
         
-        # Deuxième ligne de boutons
-        btn_layout2 = QHBoxLayout()
-        btn_layout2.setSpacing(20)
-        online_btn = QPushButton("🌐 ONLINE LIBRARY")
-        online_btn.setFixedSize(200, 80)
-        online_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
-        online_btn.clicked.connect(self.open_online_library.emit)
-        btn_layout2.addWidget(online_btn)
-        layout.addLayout(btn_layout2)
+
         
         bmc_btn = QPushButton('☕ Buy me a coffee')
         bmc_btn.setStyleSheet(BMC_BUTTON_STYLE)
@@ -1851,175 +1842,7 @@ class FileViewerPage(QWidget):
         self.close_file()
         super().closeEvent(event)
 
-# =====================================================================================
-# PAGE BIBLIOTHEQUE EN LIGNE
-# =====================================================================================
-class OnlineLibraryPage(QWidget):
-    manga_selected = Signal(str, str)  # manga_id, manga_title
-    back_clicked = Signal()
 
-    def __init__(self):
-        super().__init__()
-        self.manga_list = []
-        self.current_page = 0
-        self.total_pages = 0
-        self.search_query = ""
-        self.grid_view = ResponsiveGridView()
-        self.setup_ui()
-        self.load_popular_manga()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        
-        # Header avec image de fond
-        header_widget = RoundedHeaderWidget()
-        header_widget.setFixedHeight(80)
-        header_widget.set_background_image(resource_path('assets/images/header.png'))
-
-        header = QHBoxLayout(header_widget)
-        header.setContentsMargins(20, 20, 20, 20)
-
-        # Titre
-        title = QLabel("Online Library")
-        title.setFont(QFont("Inter", 32, QFont.Weight.Bold))
-        title.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
-        header.addWidget(title)
-        header.addStretch()
-
-        # Barre d'outils
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
-
-        # Bouton retour
-        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
-        toolbar.addWidget(back_btn)
-
-        # Barre de recherche
-        self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("Rechercher un manga...")
-        self.search_field.setFixedWidth(300)
-        self.search_field.textChanged.connect(self.on_search_changed)
-        toolbar.addWidget(self.search_field)
-
-        # Bouton de recherche
-        search_btn = make_header_btn(resource_path("assets/icons/search-white.svg"), "Rechercher", self.search_manga)
-        toolbar.addWidget(search_btn)
-
-        # Bouton populaire
-        popular_btn = make_header_btn(resource_path("assets/icons/sort-alpha-down-white.svg"), "Populaire", self.load_popular_manga)
-        toolbar.addWidget(popular_btn)
-
-        header.addLayout(toolbar)
-        header.addSpacing(20)
-        
-        layout.addWidget(header_widget)
-        layout.addWidget(self.grid_view)
-
-    def on_search_changed(self):
-        """Déclenche la recherche après un délai"""
-        self.search_query = self.search_field.text().strip()
-        if hasattr(self, 'search_timer'):
-            self.search_timer.stop()
-        else:
-            from PySide6.QtCore import QTimer
-            self.search_timer = QTimer()
-            self.search_timer.setSingleShot(True)
-            self.search_timer.timeout.connect(self.search_manga)
-        self.search_timer.start(500)  # 500ms de délai
-
-    def search_manga(self):
-        """Recherche des mangas sur MangaDex"""
-        if not self.search_query:
-            self.load_popular_manga()
-            return
-
-        try:
-            url = 'https://api.mangadex.org/manga'
-            params = {
-                'title': self.search_query,
-                'limit': 50,
-                'includes[]': ['cover_art']
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                self.manga_list = data.get('data', [])
-                self.display_manga_list()
-            else:
-                print(f"Erreur recherche: {response.status_code}")
-        except Exception as e:
-            print(f"Erreur lors de la recherche: {e}")
-
-    def load_popular_manga(self):
-        """Charge les mangas populaires"""
-        try:
-            url = 'https://api.mangadex.org/manga'
-            params = {
-                'order[followedCount]': 'desc',
-                'limit': 50,
-                'includes[]': ['cover_art']
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                self.manga_list = data.get('data', [])
-                self.display_manga_list()
-            else:
-                print(f"Erreur chargement populaire: {response.status_code}")
-        except Exception as e:
-            print(f"Erreur lors du chargement des mangas populaires: {e}")
-
-    def display_manga_list(self):
-        """Affiche la liste des mangas"""
-        widgets = []
-        
-        for manga in self.manga_list:
-            manga_id = manga['id']
-            manga_data = manga['attributes']
-            title = manga_data['title'].get('en', 'Sans titre')
-            
-            # Récupérer la couverture
-            cover_url = None
-            if 'relationships' in manga:
-                for rel in manga['relationships']:
-                    if rel['type'] == 'cover_art':
-                        cover_id = rel['id']
-                        cover_url = f"https://uploads.mangadex.org/covers/{manga_id}/{cover_id}.jpg"
-                        break
-            
-            # Créer une vignette temporaire
-            if cover_url:
-                # Télécharger et sauvegarder la couverture
-                try:
-                    response = requests.get(cover_url, timeout=10)
-                    if response.status_code == 200:
-                        # Créer un dossier temporaire pour les couvertures
-                        temp_dir = os.path.join(os.getcwd(), '.temp_covers')
-                        os.makedirs(temp_dir, exist_ok=True)
-                        cover_path = os.path.join(temp_dir, f"{manga_id}.jpg")
-                        
-                        with open(cover_path, 'wb') as f:
-                            f.write(response.content)
-                        
-                        widget = ThumbnailWidget(cover_path, title, path=manga_id, show_menu=False)
-                    else:
-                        # Utiliser une vignette par défaut
-                        default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
-                        widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
-                except Exception as e:
-                    print(f"Erreur téléchargement couverture: {e}")
-                    default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
-                    widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
-            else:
-                default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
-                widget = ThumbnailWidget(default_path, title, path=manga_id, show_menu=False)
-            
-            widget.clicked.connect(lambda checked, mid=manga_id, t=title: self.manga_selected.emit(mid, t))
-            widgets.append(widget)
-        
-        self.grid_view.set_items(widgets)
 
 # =====================================================================================
 # PAGE CHAPITRES MANGA
@@ -2271,17 +2094,11 @@ class MainWindow(QMainWindow):
         self.bookshelf_page = BookShelfPage()
         self.folder_view_page = FolderViewPage()
         self.pdf_viewer_page = FileViewerPage()
-        self.online_library_page = OnlineLibraryPage()
-        self.manga_chapters_page = MangaChaptersPage()
-        self.chapter_download_page = ChapterDownloadPage()
 
         self.stacked_widget.addWidget(self.home_page)
         self.stacked_widget.addWidget(self.bookshelf_page)
         self.stacked_widget.addWidget(self.folder_view_page)
         self.stacked_widget.addWidget(self.pdf_viewer_page)
-        self.stacked_widget.addWidget(self.online_library_page)
-        self.stacked_widget.addWidget(self.manga_chapters_page)
-        self.stacked_widget.addWidget(self.chapter_download_page)
 
         self.connect_signals()
         self.show_home()
@@ -2289,7 +2106,6 @@ class MainWindow(QMainWindow):
     def connect_signals(self):
         self.home_page.open_bookshelf.connect(self.show_bookshelf)
         self.home_page.open_file_dialog.connect(self.open_file)
-        self.home_page.open_online_library.connect(self.show_online_library)
 
         self.bookshelf_page.folder_selected.connect(self.show_folder_view)
         self.bookshelf_page.add_folder_clicked.connect(self.open_directory)
@@ -2300,15 +2116,7 @@ class MainWindow(QMainWindow):
 
         self.pdf_viewer_page.back_clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.folder_view_page))
 
-        # Signaux pour la bibliothèque en ligne
-        self.online_library_page.manga_selected.connect(self.show_manga_chapters)
-        self.online_library_page.back_clicked.connect(self.show_home)
 
-        self.manga_chapters_page.chapter_selected.connect(self.show_chapter_download)
-        self.manga_chapters_page.back_clicked.connect(self.show_online_library)
-
-        self.chapter_download_page.download_complete.connect(self.open_downloaded_file)
-        self.chapter_download_page.back_clicked.connect(self.show_manga_chapters)
 
     def show_home(self):
         self.folder_view_page.selection_mode = False
@@ -2343,24 +2151,7 @@ class MainWindow(QMainWindow):
         self.pdf_viewer_page.load_file(path)
         self.stacked_widget.setCurrentWidget(self.pdf_viewer_page)
 
-    def show_online_library(self):
-        """Affiche la page de la bibliothèque en ligne"""
-        self.stacked_widget.setCurrentWidget(self.online_library_page)
 
-    def show_manga_chapters(self, manga_id, manga_title):
-        """Affiche la page des chapitres d'un manga"""
-        self.manga_chapters_page.set_manga(manga_id, manga_title)
-        self.stacked_widget.setCurrentWidget(self.manga_chapters_page)
-
-    def show_chapter_download(self, chapter_id, chapter_title):
-        """Affiche la page de téléchargement d'un chapitre"""
-        self.chapter_download_page.set_chapter(chapter_id, chapter_title)
-        self.stacked_widget.setCurrentWidget(self.chapter_download_page)
-
-    def open_downloaded_file(self, file_path):
-        """Ouvre le fichier téléchargé dans le lecteur"""
-        if os.path.exists(file_path):
-            self.show_pdf_viewer(file_path)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Ouvrir un fichier", "", "Fichiers supportés (*.pdf *.cbz *.zip *.rar);;PDF Files (*.pdf);;CBZ Files (*.cbz);;ZIP Files (*.zip);;RAR Files (*.rar)")
