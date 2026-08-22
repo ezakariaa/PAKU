@@ -3,11 +3,21 @@ import os
 import json
 import functools
 import zipfile
-import fitz  # PyMuPDF
+import pymupdf as fitz  # l'alias historique `fitz` est déprécié depuis PyMuPDF 1.26
 import rarfile
 import requests
 
 # === AJOUT : Fonction utilitaire pour les chemins d'assets compatible PyInstaller ===
+# Traces de mise au point : muettes par défaut. Elles représentent une centaine
+# d'écritures console au démarrage, et plusieurs milliers sur un gros dossier.
+DEBUG = os.environ.get("PAKU_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def debug(message):
+    if DEBUG:
+        print(message)
+
+
 def resource_path(relative_path):
     """Retourne le chemin absolu vers un fichier ressource, compatible PyInstaller et dev."""
     if hasattr(sys, '_MEIPASS'):
@@ -15,25 +25,32 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath('.'), relative_path)
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy,
     QPushButton, QLabel, QStackedWidget, QGridLayout, QScrollArea,
     QFileDialog, QMenu, QInputDialog, QDialog, QProgressBar, QMessageBox,
     QGraphicsDropShadowEffect, QLineEdit
 )
 from PySide6.QtGui import (
-    QFont, QPixmap, QIcon, QImage, QFontDatabase, QPainter, QColor,
-    QDesktopServices, QBrush, QPen
+    QFont, QPixmap, QIcon, QImage, QImageReader, QFontDatabase, QPainter, QColor,
+    QDesktopServices, QBrush, QPen, QPainterPath, QLinearGradient, QPalette,
+    QActionGroup
 )
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QUrl  # imports nettoyés
+from PySide6.QtCore import (Qt, Signal, QSize, QTimer, QUrl, QRect, QRectF, QPoint, QPointF,
+                            QPropertyAnimation, QEasingCurve)  # imports nettoyés
 from PySide6.QtSvg import QSvgRenderer
 
 # Importer les styles
 from styles.styles import (
-    HOME_PAGE_BUTTON_STYLE, BMC_BUTTON_STYLE, THUMBNAIL_IMAGE_STYLE,
+    HOME_PRIMARY_BUTTON_STYLE, HOME_SECONDARY_BUTTON_STYLE, HOME_SUBTITLE_STYLE,
+    BMC_BUTTON_STYLE, PAYPAL_BUTTON_STYLE, HOME_SUPPORT_HEIGHT, THUMBNAIL_IMAGE_STYLE,
     THUMBNAIL_IMAGE_HOVER_STYLE, THUMBNAIL_MENU_BUTTON_STYLE,
     SCROLL_AREA_STYLE, BACK_BUTTON_STYLE,
     PAGE_TITLE_STYLE, FOLDER_PATH_STYLE,
-    PAGE_TITLE_STYLE_BOOKSHELF
+    PAGE_TITLE_STYLE_BOOKSHELF, HEADER_SUBTITLE_STYLE, HEADER_TOOLBAR_STYLE,
+    HEADER_ICON_BUTTON_STYLE, HEADER_BACK_BUTTON_STYLE, HEADER_SEARCH_STYLE,
+    HEADER_PRIMARY_BUTTON_STYLE,
+    PROGRESS_CARD_STYLE, PROGRESS_TITLE_STYLE, PROGRESS_PERCENT_STYLE,
+    PROGRESS_MESSAGE_STYLE, PROGRESS_BAR_STYLE
 )
 
 from ui.flowlayout import FlowLayout
@@ -47,13 +64,307 @@ ARCHIVE_EXTENSIONS = ('.pdf', '.cbz', '.zip', '.rar', '.cbr')
 os.environ["QT_STYLE_OVERRIDE"] = ""
 
 # =====================================================================================
+# PIPELINE DE VIGNETTES HAUTE QUALITÉ
+# =====================================================================================
+# Taille logique d'une pochette dans la grille.
+THUMB_DISPLAY_SIZE = (200, 280)
+# Épaisseur et rayon intérieur de la bordure : doivent rester synchronisés avec
+# THUMBNAIL_IMAGE_STYLE dans styles/styles.py (border: 4px, border-radius: 14px).
+THUMB_BORDER_WIDTH = 4
+THUMB_CORNER_RADIUS = 14 - THUMB_BORDER_WIDTH
+# --- Boîte de progression ---
+PROGRESS_CARD_WIDTH = 560
+PROGRESS_CARD_MARGIN = 14      # place laissée à l'ombre portée
+
+HOME_BUTTON_WIDTH = 190       # entrées principales de la page d'accueil
+HOME_BUTTON_HEIGHT = 54
+# --- Langues ---
+# Drapeau conventionnel de chaque langue. Les SVG vivent dans
+# assets/icons/flags/ et se remplacent sans toucher au code.
+LANGUAGES = (
+    ("fr", "Français"),
+    ("en", "Anglais"),
+    ("ar", "Arabe"),
+    ("es", "Espagnol"),
+    ("de", "Allemand"),
+    ("ja", "Japonais"),
+)
+LANGUAGE_LABELS = dict(LANGUAGES)
+LANGUAGE_FILE = ".languages.json"
+THUMB_FLAG_HEIGHT = 21
+
+THUMB_MENU_SIZE = 28          # pastille ⋯ dans le coin de la pochette
+# Les vignettes sont mises en cache à 3x la taille d'affichage : de quoi rester nettes
+# jusqu'à une mise à l'échelle Windows de 300 %.
+THUMB_CACHE_SIZE = (THUMB_DISPLAY_SIZE[0] * 3, THUMB_DISPLAY_SIZE[1] * 3)
+# Ancien standard de cache : en dessous, une vignette date du rendu basse résolution.
+LEGACY_THUMB_SIZE = (THUMB_DISPLAY_SIZE[0] * 2, THUMB_DISPLAY_SIZE[1] * 2)
+# À incrémenter dès que le rendu change, pour réinvalider les vignettes en cache.
+THUMB_CACHE_VERSION = "2"
+
+# --- Barre d'en-tête de la bibliothèque ---
+HEADER_HEIGHT = 84
+HEADER_RADIUS = 14
+HEADER_TOOLBAR_HEIGHT = 42
+HEADER_BTN_SIZE = 34
+HEADER_SEARCH_WIDTH = 210
+# Voile appliqué sur les bannières : c'est lui qui rend lisibles le titre et les
+# icônes blancs, quelle que soit la clarté de l'image de fond.
+HEADER_SCRIM = ((17, 20, 27, 214), (17, 20, 27, 168))
+
+# --- Lecteur ---
+VIEWER_ZOOM_MIN = 0.2
+VIEWER_ZOOM_MAX = 5.0
+VIEWER_ZOOM_STEP = 1.15   # un cran de molette
+
+
+def smooth_resize(image, target_w, target_h, expanding=False):
+    """Redimensionne en réduisant par moitiés successives.
+
+    Un scaling bilinéaire en une passe sous-échantillonne les fortes réductions
+    (moiré sur les trames de manga) ; le demi-pas moyenne tous les pixels source.
+    """
+    if image.isNull() or image.width() <= 0 or image.height() <= 0:
+        return image
+    pick = max if expanding else min
+    scale = pick(target_w / image.width(), target_h / image.height())
+    while scale < 0.5:
+        image = image.scaled(max(1, image.width() // 2), max(1, image.height() // 2),
+                             Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        scale *= 2
+    mode = (Qt.AspectRatioMode.KeepAspectRatioByExpanding if expanding
+            else Qt.AspectRatioMode.KeepAspectRatio)
+    return image.scaled(target_w, target_h, mode, Qt.TransformationMode.SmoothTransformation)
+
+
+def fit_cover(image, target_w, target_h):
+    """Remplit exactement target_w x target_h, en recadrant au centre."""
+    scaled = smooth_resize(image, target_w, target_h, expanding=True)
+    x = max(0, (scaled.width() - target_w) // 2)
+    y = max(0, (scaled.height() - target_h) // 2)
+    return scaled.copy(x, y, min(target_w, scaled.width()), min(target_h, scaled.height()))
+
+
+def render_pdf_cover(pdf_path):
+    """Rend la première page d'un PDF à la résolution du cache de vignettes."""
+    doc = fitz.open(pdf_path)
+    try:
+        if doc.page_count == 0:
+            return QImage()
+        page = doc[0]
+        rect = page.rect
+        if rect.width <= 0 or rect.height <= 0:
+            return QImage()
+        # Zoom relatif aux 72 dpi de PyMuPDF, borné pour ne pas exploser la mémoire.
+        zoom = min(8.0, max(1.0, max(THUMB_CACHE_SIZE[0] / rect.width,
+                                     THUMB_CACHE_SIZE[1] / rect.height)))
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        # copy() : le tampon de pix est libéré en même temps que le document.
+        return QImage(pix.samples, pix.width, pix.height, pix.stride,
+                      QImage.Format.Format_RGB888).copy()
+    finally:
+        doc.close()
+
+
+def first_archive_image(archive):
+    """Décode la première image d'une archive zip/rar déjà ouverte."""
+    pages = sorted(n for n in archive.namelist() if n.lower().endswith(IMAGE_EXTENSIONS))
+    return QImage.fromData(archive.read(pages[0])) if pages else QImage()
+
+
+def extract_cover_image(source_path):
+    """Couverture d'un PDF, d'une archive (cbz/zip/rar/cbr) ou d'une image."""
+    low = source_path.lower()
+    if low.endswith('.pdf'):
+        return render_pdf_cover(source_path)
+    if low.endswith(('.cbz', '.zip')):
+        with zipfile.ZipFile(source_path, 'r') as archive:
+            return first_archive_image(archive)
+    if low.endswith(('.rar', '.cbr')):
+        with rarfile.RarFile(source_path, 'r') as archive:
+            return first_archive_image(archive)
+    if low.endswith(IMAGE_EXTENSIONS):
+        return QImage(source_path)
+    return QImage()
+
+
+def save_cover_thumbnail(image, thumb_path):
+    """Écrit une couverture dans le cache sans jamais l'agrandir. True si écrite."""
+    if image.isNull():
+        return False
+    if image.width() > THUMB_CACHE_SIZE[0] or image.height() > THUMB_CACHE_SIZE[1]:
+        image = smooth_resize(image, *THUMB_CACHE_SIZE)
+    os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
+    return image.save(thumb_path, "PNG")
+
+
+def write_cover_thumbnail(source_path, thumb_path):
+    """Génère la vignette haute qualité de source_path. True si écrite."""
+    try:
+        return save_cover_thumbnail(extract_cover_image(source_path), thumb_path)
+    except Exception as e:
+        print(f"Erreur vignette {source_path}: {e}")
+        return False
+
+
+def folder_cover_source(folder_path, depth=1):
+    """Fichier dont dériver la pochette d'un dossier.
+
+    Une archive d'abord, sinon une image à la racine, sinon la première image
+    d'un sous-dossier : un manga rangé en dossiers de chapitres n'a rien
+    d'exploitable à sa racine.
+    """
+    try:
+        entries = sorted(os.listdir(folder_path))
+    except OSError:
+        return None
+    for extensions in (ARCHIVE_EXTENSIONS, IMAGE_EXTENSIONS):
+        matches = [f for f in entries if f.lower().endswith(extensions)]
+        if matches:
+            return os.path.join(folder_path, matches[0])
+    if depth > 0:
+        for name in entries:
+            if name.startswith('.'):
+                continue
+            sub_folder = os.path.join(folder_path, name)
+            if os.path.isdir(sub_folder):
+                source = folder_cover_source(sub_folder, depth - 1)
+                if source:
+                    return source
+    return None
+
+
+def ensure_folder_thumbnail(folder_path):
+    """Pochette d'un dossier, fabriquée à la demande si elle manque encore."""
+    existing = get_thumbnail_path(None, folder_path=folder_path)
+    if existing:
+        return existing
+    source = folder_cover_source(folder_path)
+    if not source:
+        return None
+    cover_path = os.path.join(folder_path, '.thumbnails', '_folder_thumb.png')
+    if write_cover_thumbnail(source, cover_path):
+        record_generated_cover(cover_path)
+        return cover_path
+    return None
+
+
+def load_language_map(folder):
+    """Langue choisie pour chaque élément d'un dossier."""
+    try:
+        with open(os.path.join(folder, LANGUAGE_FILE), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_item_language(item_path, code):
+    """Écrit la langue d'un élément dans le .languages.json de son dossier parent.
+
+    Même convention que le .alias.json déjà utilisé pour les renommages.
+    """
+    folder = os.path.dirname(item_path)
+    languages = load_language_map(folder)
+    name = os.path.basename(item_path)
+    if code:
+        languages[name] = code
+    else:
+        languages.pop(name, None)
+    try:
+        with open(os.path.join(folder, LANGUAGE_FILE), 'w', encoding='utf-8') as f:
+            json.dump(languages, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"Erreur lors de l'enregistrement de la langue : {e}")
+
+
+def load_thumb_cache_index(thumb_dir):
+    """Version du rendu ayant produit chaque vignette auto-générée du dossier.
+
+    Une couverture posée par l'utilisateur ou téléchargée n'y figure pas : elle ne
+    sera donc jamais réécrite par la génération automatique.
+    """
+    try:
+        with open(os.path.join(thumb_dir, '.cache.json'), 'r', encoding='utf-8') as f:
+            index = json.load(f)
+        return index if isinstance(index, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_thumb_cache_index(thumb_dir, index):
+    try:
+        with open(os.path.join(thumb_dir, '.cache.json'), 'w', encoding='utf-8') as f:
+            json.dump(index, f)
+    except OSError as e:
+        print(f"Impossible d'écrire l'index des vignettes : {e}")
+
+
+def mark_cover_as_custom(cover_path):
+    """Sort une couverture de l'index : posée à la main ou téléchargée, la
+    génération automatique ne doit plus jamais l'écraser."""
+    thumb_dir = os.path.dirname(cover_path)
+    index = load_thumb_cache_index(thumb_dir)
+    if index.pop(os.path.basename(cover_path), None) is not None:
+        save_thumb_cache_index(thumb_dir, index)
+
+
+def record_generated_cover(cover_path):
+    """Inscrit une couverture auto-générée dans l'index du dossier."""
+    thumb_dir = os.path.dirname(cover_path)
+    index = load_thumb_cache_index(thumb_dir)
+    index[os.path.basename(cover_path)] = THUMB_CACHE_VERSION
+    save_thumb_cache_index(thumb_dir, index)
+
+
+def thumbnail_needs_render(thumb_path, source_path, index):
+    """Vignette absente, périmée, ou issue d'une version antérieure du rendu."""
+    if not os.path.exists(thumb_path):
+        return True
+    name = os.path.basename(thumb_path)
+    if name in index:
+        if index[name] != THUMB_CACHE_VERSION:
+            return True
+    else:
+        # Vignette antérieure à l'index : on ne la refait que si sa définition est
+        # sous l'ancien standard 400x560 (typiquement les PDF rendus à 14 dpi).
+        size = QImageReader(thumb_path).size()
+        if not size.isValid():
+            return True
+        if size.width() < LEGACY_THUMB_SIZE[0] or size.height() < LEGACY_THUMB_SIZE[1]:
+            return True
+    try:
+        return os.path.getmtime(thumb_path) < os.path.getmtime(source_path)
+    except OSError:
+        return True
+
+# =====================================================================================
 # LABEL AVEC COINS ARRONDIS
 # =====================================================================================
 class RoundedLabel(QLabel):
     clicked = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.radius = 10
+        self.deferred_load = None
+
+    def paintEvent(self, event):
+        """Charge la pochette au premier rendu réel.
+
+        Qt ne peint que ce qui est dans la fenêtre : sur un dossier de 700
+        volumes, seule la dizaine visible paie le décodage du PNG, au lieu des
+        700 au moment de bâtir la grille.
+        """
+        if self.deferred_load is not None:
+            load, self.deferred_load = self.deferred_load, None
+            # Hors du cycle de peinture (setPixmap redemande un rendu), et lié à
+            # ce label : une grille reconstruite détruit ses vignettes, le rappel
+            # doit mourir avec elles plutôt que toucher un objet libéré.
+            QTimer.singleShot(0, self, load)
+        super().paintEvent(event)
+
     def mousePressEvent(self, event):
         self.clicked.emit()
         super().mousePressEvent(event)
@@ -61,11 +372,70 @@ class RoundedLabel(QLabel):
 # =====================================================================================
 # HEADER AVEC COINS ARRONDIS
 # =====================================================================================
+class FlagBadge(QLabel):
+    """Drapeau de langue posé dans le coin d'une pochette."""
+
+    def __init__(self, code, height=THUMB_FLAG_HEIGHT, parent=None):
+        super().__init__(parent)
+        self.code = code
+        self.setFixedSize(round(height * 3 / 2), height)
+        self.setToolTip(LANGUAGE_LABELS.get(code, code))
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # THUMBNAIL_IMAGE_STYLE est posé sur la pochette sans sélecteur : Qt le
+        # propage aux enfants. Sans cette remise à zéro, le drapeau héritait du
+        # cadre noir de 4 px et se retrouvait rogné à l'intérieur.
+        self.setStyleSheet("background: transparent; border: none;")
+        self._render()
+
+    def _render(self):
+        """Rend le SVG aux pixels physiques de l'écran, sans habillage."""
+        ratio = self.devicePixelRatioF()
+        w = max(1, round(self.width() * ratio))
+        h = max(1, round(self.height() * ratio))
+        canvas = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        shape = QPainterPath()
+        shape.addRoundedRect(QRectF(0, 0, w, h), 2 * ratio, 2 * ratio)
+        painter.setClipPath(shape)
+        renderer = QSvgRenderer(resource_path(f"assets/icons/flags/{self.code}.svg"))
+        if renderer.isValid():
+            renderer.render(painter, QRectF(0, 0, w, h))
+        else:
+            painter.fillRect(QRectF(0, 0, w, h), QColor("#4a5160"))
+        painter.end()
+        pixmap = QPixmap.fromImage(canvas)
+        pixmap.setDevicePixelRatio(ratio)
+        self.setPixmap(pixmap)
+
+
+class ThumbnailMenuButton(QPushButton):
+    """Pastille de menu posée sur la pochette.
+
+    Les points sont dessinés plutôt qu'écrits : le glyphe U+22EF manque dans
+    beaucoup de polices, qui retombent alors sur un caractère de substitution.
+    """
+    DOT_RADIUS = 1.7
+    DOT_GAP = 5.5
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255))
+        center = QPointF(self.width() / 2, self.height() / 2)
+        for offset in (-self.DOT_GAP, 0.0, self.DOT_GAP):
+            painter.drawEllipse(center + QPointF(offset, 0), self.DOT_RADIUS, self.DOT_RADIUS)
+
+
 class RoundedHeaderWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.radius = 8
         self.background_image = None
+        self.scrim = None
     def set_background_image(self, image_path):
         if image_path and os.path.exists(image_path):
             self.background_image = image_path
@@ -73,37 +443,46 @@ class RoundedHeaderWidget(QWidget):
         else:
             self.background_image = None
             self.update()
+    def set_scrim(self, top_color=None, bottom_color=None):
+        """Voile dégradé posé sur l'image de fond.
+
+        Sans lui, les icônes et le titre blancs disparaissent sur une bannière
+        claire comme le collage par défaut.
+        """
+        top = QColor(*HEADER_SCRIM[0]) if top_color is None else QColor(top_color)
+        bottom = QColor(*HEADER_SCRIM[1]) if bottom_color is None else QColor(bottom_color)
+        self.scrim = (top, bottom)
+        self.update()
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # Découpe arrondie au tracé : le masque 1 bit d'avant crénelait les coins.
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), self.radius, self.radius)
+        painter.setClipPath(clip)
+        painted = False
         if self.background_image and os.path.exists(self.background_image):
-            pixmap = QPixmap(self.background_image)
-            if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(
-                    self.width(), self.height(),
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                x_offset = (scaled_pixmap.width() - self.width()) // 2
-                y_offset = (scaled_pixmap.height() - self.height()) // 2
-                mask = QPixmap(self.size())
-                mask.fill(QColor('black'))
-                mask_painter = QPainter(mask)
-                mask_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                mask_painter.setBrush(QBrush(QColor('white')))
-                mask_painter.setPen(QPen(Qt.PenStyle.NoPen))
-                mask_painter.drawRoundedRect(
-                    0, 0, self.width(), self.height(), self.radius, self.radius
-                )
-                mask_painter.end()
-                scaled_pixmap.setMask(mask.createMaskFromColor(QColor('black')))
-                painter.drawPixmap(-x_offset, -y_offset, scaled_pixmap)
-            else:
-                painter.fillRect(self.rect(), QColor("#f8f9fa"))
+            source = QImage(self.background_image)
+            if not source.isNull():
+                # Fond rendu aux pixels physiques de l'écran, comme les vignettes.
+                ratio = self.devicePixelRatioF()
+                cover = fit_cover(source, max(1, round(self.width() * ratio)),
+                                  max(1, round(self.height() * ratio)))
+                cover.setDevicePixelRatio(ratio)
+                painter.drawImage(0, 0, cover)
+                painted = True
+        if not painted:
+            painter.fillRect(self.rect(), QColor("#1b1f27" if self.scrim else "#f8f9fa"))
+        if self.scrim:
+            veil = QLinearGradient(0, 0, 0, self.height())
+            veil.setColorAt(0.0, self.scrim[0])
+            veil.setColorAt(1.0, self.scrim[1])
+            painter.fillRect(self.rect(), QBrush(veil))
+            painter.setPen(QColor(255, 255, 255, 28))
         else:
-            painter.fillRect(self.rect(), QColor("#f8f9fa"))
-        painter.setPen(QColor("#e9ecef"))
-        painter.drawLine(0, self.height() - 2, self.width(), self.height() - 2)
+            painter.setPen(QColor("#e9ecef"))
+        painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
 
 # =====================================================================================
 # PAGE D'ACCUEIL
@@ -124,49 +503,38 @@ class HomePage(QWidget):
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
         subtitle = QLabel("Un Lecteur de Manga Offline")
-        subtitle.setFont(QFont("Inter", 14))
-        subtitle.setStyleSheet("color: #444; margin-bottom: 20px;")
+        subtitle.setFont(QFont("Inter", 13))
+        subtitle.setStyleSheet(HOME_SUBTITLE_STYLE)
         layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        # Première ligne de boutons
+
+        # Deux entrées : la bibliothèque porte l'accent, le fichier isolé reste sobre.
         btn_layout1 = QHBoxLayout()
-        btn_layout1.setSpacing(20)
+        btn_layout1.setSpacing(16)
         open_btn = QPushButton("OPEN FILE")
-        open_btn.setFixedSize(200, 80)
-        open_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
+        open_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
+        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.setStyleSheet(HOME_SECONDARY_BUTTON_STYLE)
         open_btn.clicked.connect(self.open_file_dialog.emit)
         btn_layout1.addWidget(open_btn)
         bookshelf_btn = QPushButton("BOOKSHELF")
-        bookshelf_btn.setFixedSize(200, 80)
-        bookshelf_btn.setStyleSheet(HOME_PAGE_BUTTON_STYLE)
+        bookshelf_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
+        bookshelf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        bookshelf_btn.setStyleSheet(HOME_PRIMARY_BUTTON_STYLE)
         bookshelf_btn.clicked.connect(self.open_bookshelf.emit)
         btn_layout1.addWidget(bookshelf_btn)
         layout.addLayout(btn_layout1)
-        
 
-        
         bmc_btn = QPushButton('☕ Buy me a coffee')
+        bmc_btn.setFixedHeight(HOME_SUPPORT_HEIGHT)
+        bmc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         bmc_btn.setStyleSheet(BMC_BUTTON_STYLE)
         bmc_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.buymeacoffee.com/ezakaria')))
         layout.addWidget(bmc_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
-        # Ajout du bouton Paypal Me
         paypal_btn = QPushButton('💙 Paypal Me')
-        paypal_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #0070ba;
-                color: #fff;
-                border: none;
-                border-radius: 10px;
-                font-family: 'Inter';
-                font-size: 18px;
-                padding: 10px 30px;
-                margin-top: 10px;
-            }
-            QPushButton:hover {
-                background-color: #1546a0;
-            }
-        ''')
+        paypal_btn.setFixedHeight(HOME_SUPPORT_HEIGHT)
+        paypal_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        paypal_btn.setStyleSheet(PAYPAL_BUTTON_STYLE)
         paypal_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.paypal.me/ZELORCHE')))
         layout.addWidget(paypal_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
@@ -174,20 +542,31 @@ class HomePage(QWidget):
 # WIDGET VIGNETTE (Utilisé pour Dossiers et PDF)
 # =====================================================================================
 class ThumbnailWidget(QWidget):
+    # Cache partagé des pochettes déjà mises à l'échelle, indexé par
+    # (chemin, date de modification, taille, densité d'écran).
+    _cover_cache = {}
+    COVER_CACHE_MAX = 400
+
     clicked = Signal()
     remove_requested = Signal(str)
     alias_requested = Signal(str, str)
     cover_requested = Signal(str)
     tags_requested = Signal(str)
-    def __init__(self, thumb_path, title_text, path=None, width=200, height=280, show_menu=True, checkbox=None):
+    language_requested = Signal(str, str)   # chemin, code de langue ("" pour aucune)
+
+    def __init__(self, thumb_path, title_text, path=None, width=THUMB_DISPLAY_SIZE[0],
+                 height=THUMB_DISPLAY_SIZE[1], show_menu=True, checkbox=None,
+                 language=None):
         super().__init__()
         self.thumb_path = thumb_path
+        self._rendered_ratio = None
         self.title_text = title_text
         self.path = path
         self.thumb_width = width
         self.thumb_height = height
         self.show_menu = show_menu
         self.checkbox = checkbox
+        self.language = language
         self.setObjectName("thumbnailWidget")
         self.setup_ui()
     def setup_ui(self):
@@ -197,9 +576,9 @@ class ThumbnailWidget(QWidget):
         self.setStyleSheet("")
         self.img_label = RoundedLabel()
         self.img_label.setContentsMargins(0, 0, 0, 0)
-        self.update_image()
         self.img_label.setFixedSize(self.thumb_width, self.thumb_height)
         self.img_label.setStyleSheet(THUMBNAIL_IMAGE_STYLE)
+        self.img_label.deferred_load = self.update_image
         self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.img_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.img_label.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -235,301 +614,350 @@ class ThumbnailWidget(QWidget):
             info_layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         info_widget.setLayout(info_layout)
         layout.addWidget(info_widget, alignment=Qt.AlignmentFlag.AlignHCenter)
+        if self.language:
+            # Coin inférieur droit, aligné sur le retrait de la pastille de menu.
+            flag = FlagBadge(self.language, parent=self.img_label)
+            corner = THUMB_BORDER_WIDTH + 5
+            flag.move(self.thumb_width - flag.width() - corner,
+                      self.thumb_height - flag.height() - corner)
+            flag.raise_()
         if self.show_menu and self.path:
-            print(f"[DEBUG] Création du menu contextuel pour : {self.path}")
-            menu_btn = QPushButton("⋯")
-            menu_btn.setFixedSize(32, 32)
+            debug(f"[DEBUG] Création du menu contextuel pour : {self.path}")
+            # Enfant du visuel, posé dans son coin supérieur droit : le bouton
+            # flotte sur la pochette au lieu d'occuper une ligne sous le titre.
+            menu_btn = ThumbnailMenuButton(self.img_label)
+            menu_btn.setFixedSize(THUMB_MENU_SIZE, THUMB_MENU_SIZE)
+            menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             menu_btn.setStyleSheet(THUMBNAIL_MENU_BUTTON_STYLE)
-            layout.addWidget(menu_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-            menu = QMenu()
-            alias_action = menu.addAction("Set alias")
-            alias_action.triggered.connect(lambda: self.alias_requested.emit(self.path, self.title_text))
-            if os.path.isdir(self.path):
-                # Remplacer Add Tags par Original Cover
-                def set_original_cover():
-                    folder_path = self.path
-                    # Chercher le premier fichier supporté
-                    files = [f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS)]
-                    files.sort()
-                    file_for_thumb = os.path.join(folder_path, files[0]) if files else None
-                    if not file_for_thumb:
-                        # Si aucune archive, chercher une image
-                        images = [f for f in os.listdir(folder_path) if f.lower().endswith(IMAGE_EXTENSIONS)]
-                        images.sort()
-                        if images:
-                            file_for_thumb = os.path.join(folder_path, images[0])
-                    if file_for_thumb:
-                        thumb_dir = os.path.join(folder_path, '.thumbnails')
-                        os.makedirs(thumb_dir, exist_ok=True)
-                        cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
-                        try:
-                            if file_for_thumb.lower().endswith('.pdf'):
-                                doc = fitz.open(file_for_thumb)
-                                if len(doc) > 0:
-                                    page = doc[0]
-                                    pix = page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2))
-                                    pix.save(cover_path)
-                                doc.close()
-                            elif file_for_thumb.lower().endswith(('.cbz', '.zip')):
-                                with zipfile.ZipFile(file_for_thumb, 'r') as zip_file:
-                                    image_files = [f for f in zip_file.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
-                                    if image_files:
-                                        image_files.sort()
-                                        first_image = image_files[0]
-                                        with zip_file.open(first_image) as image_file:
-                                            image_data = image_file.read()
-                                            qimage = QImage()
-                                            if qimage.loadFromData(image_data):
-                                                pixmap = QPixmap.fromImage(qimage)
-                                                scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                                scaled_pixmap.save(cover_path)
-                            elif file_for_thumb.lower().endswith('.rar'):
-                                with rarfile.RarFile(file_for_thumb, 'r') as rar:
-                                    image_files = [f for f in rar.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
-                                    if image_files:
-                                        image_files.sort()
-                                        first_image = image_files[0]
-                                        with rar.open(first_image) as image_file:
-                                            image_data = image_file.read()
-                                            qimage = QImage()
-                                            if qimage.loadFromData(image_data):
-                                                pixmap = QPixmap.fromImage(qimage)
-                                                scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                                scaled_pixmap.save(cover_path)
-                            elif file_for_thumb.lower().endswith(IMAGE_EXTENSIONS):
-                                qimage = QImage(file_for_thumb)
-                                if not qimage.isNull():
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(cover_path)
-                            # Rafraîchir la vignette
-                            self.update_thumbnail(cover_path)
-                        except Exception as e:
-                            print(f"Erreur lors de la génération de la couverture originale : {e}")
-                original_cover_action = menu.addAction("Original Cover")
-                original_cover_action.triggered.connect(set_original_cover)
+            inset = THUMB_BORDER_WIDTH + 5
+            menu_btn.move(self.thumb_width - THUMB_MENU_SIZE - inset, inset)
+            menu_btn.raise_()
+            def build_menu():
+                """Menu assemblé au clic.
+
+                Le construire pour chaque vignette représentait plus de la
+                moitié du coût de fabrication d'une grille.
+                """
+                menu = QMenu()
+                alias_action = menu.addAction("Set alias")
+                alias_action.triggered.connect(lambda: self.alias_requested.emit(self.path, self.title_text))
+
+                language_menu = menu.addMenu("Langue")
+                choices = QActionGroup(language_menu)
+                choices.setExclusive(True)
+                for code, label in LANGUAGES:
+                    action = language_menu.addAction(label)
+                    action.setCheckable(True)
+                    action.setChecked(code == self.language)
+                    choices.addAction(action)
+                    action.triggered.connect(
+                        lambda _checked=False, c=code: self.language_requested.emit(self.path, c))
+                language_menu.addSeparator()
+                clear_action = language_menu.addAction("Aucune")
+                clear_action.setCheckable(True)
+                clear_action.setChecked(not self.language)
+                choices.addAction(clear_action)
+                clear_action.triggered.connect(
+                    lambda: self.language_requested.emit(self.path, ""))
+                if os.path.isdir(self.path):
+                    # Remplacer Add Tags par Original Cover
+                    def set_original_cover():
+                        folder_path = self.path
+                        # Chercher le premier fichier supporté
+                        files = [f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS)]
+                        files.sort()
+                        file_for_thumb = os.path.join(folder_path, files[0]) if files else None
+                        if not file_for_thumb:
+                            # Si aucune archive, chercher une image
+                            images = [f for f in os.listdir(folder_path) if f.lower().endswith(IMAGE_EXTENSIONS)]
+                            images.sort()
+                            if images:
+                                file_for_thumb = os.path.join(folder_path, images[0])
+                        if file_for_thumb:
+                            thumb_dir = os.path.join(folder_path, '.thumbnails')
+                            cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                            if write_cover_thumbnail(file_for_thumb, cover_path):
+                                record_generated_cover(cover_path)
+                                # Rafraîchir la vignette
+                                self.update_thumbnail(cover_path)
+
+                    original_cover_action = menu.addAction("Original Cover")
+                    original_cover_action.triggered.connect(set_original_cover)
                 
 
             
-            # Ajouter l'option Download Cover pour tous les éléments (dossiers et fichiers)
-            def download_cover_from_anilist_for_all():
-                # Fonction pour récupérer l'alias d'un dossier
-                def get_folder_alias(folder_path):
-                    try:
-                        # Chercher dans la bibliothèque principale
-                        if os.path.exists(LIBRARY_FILE):
-                            with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
-                                library = json.load(f)
-                            for entry in library:
-                                if entry["path"] == folder_path:
-                                    return entry.get("alias")
-                    except Exception as e:
-                        print(f"Erreur lecture alias bibliothèque : {e}")
-                    return None
-                
-                # Fonction pour récupérer l'alias d'un fichier
-                def get_file_alias(file_path):
-                    parent_dir = os.path.dirname(file_path)
-                    alias_file = os.path.join(parent_dir, '.alias.json')
-                    if os.path.exists(alias_file):
+                # Ajouter l'option Download Cover pour tous les éléments (dossiers et fichiers)
+                def download_cover_from_anilist_for_all():
+                    # Fonction pour récupérer l'alias d'un dossier
+                    def get_folder_alias(folder_path):
                         try:
-                            with open(alias_file, 'r', encoding='utf-8') as f:
-                                alias_map = json.load(f)
-                            return alias_map.get(os.path.basename(file_path))
+                            # Chercher dans la bibliothèque principale
+                            if os.path.exists(LIBRARY_FILE):
+                                with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
+                                    library = json.load(f)
+                                for entry in library:
+                                    if entry["path"] == folder_path:
+                                        return entry.get("alias")
                         except Exception as e:
-                            print(f"Erreur lecture alias fichier : {e}")
-                    return None
+                            print(f"Erreur lecture alias bibliothèque : {e}")
+                        return None
                 
-                if os.path.isdir(self.path):
-                    # Pour les dossiers, utiliser l'alias si disponible, sinon le nom du dossier
-                    alias = get_folder_alias(self.path)
-                    manga_name = alias if alias else os.path.basename(self.path)
-                    target_path = self.path
-                else:
-                    # Pour les fichiers, utiliser l'alias si disponible, sinon le nom du fichier
-                    alias = get_file_alias(self.path)
-                    if alias:
-                        manga_name = alias
-                    else:
-                        manga_name = os.path.splitext(os.path.basename(self.path))[0]
-                    target_path = os.path.dirname(self.path)
+                    # Fonction pour récupérer l'alias d'un fichier
+                    def get_file_alias(file_path):
+                        parent_dir = os.path.dirname(file_path)
+                        alias_file = os.path.join(parent_dir, '.alias.json')
+                        if os.path.exists(alias_file):
+                            try:
+                                with open(alias_file, 'r', encoding='utf-8') as f:
+                                    alias_map = json.load(f)
+                                return alias_map.get(os.path.basename(file_path))
+                            except Exception as e:
+                                print(f"Erreur lecture alias fichier : {e}")
+                        return None
                 
-                print(f"[DEBUG] Tentative de téléchargement de couverture pour : {manga_name}")
-                
-                # Récupérer les informations depuis AniList puis MangaDex si pas trouvé
-                info = fetch_manga_info(manga_name)
-                if info and info.get('cover'):
-                    cover_url = info['cover']
-                    thumb_dir = os.path.join(target_path, '.thumbnails')
-                    try:
-                        os.makedirs(thumb_dir, exist_ok=True)
-                    except OSError as e:
-                        print(f"Impossible de créer le dossier de vignettes : {thumb_dir}. Erreur : {e}")
-                        return
-                    
                     if os.path.isdir(self.path):
-                        # Pour les dossiers, sauvegarder comme _folder_thumb.png
-                        cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                        # Pour les dossiers, utiliser l'alias si disponible, sinon le nom du dossier
+                        alias = get_folder_alias(self.path)
+                        manga_name = alias if alias else os.path.basename(self.path)
+                        target_path = self.path
                     else:
-                        # Pour les fichiers, sauvegarder avec le nom du fichier
-                        base_name = os.path.splitext(os.path.basename(self.path))[0]
-                        cover_path = os.path.join(thumb_dir, base_name + '.png')
-                    
-                    try:
-                        resp = requests.get(cover_url, timeout=10)
-                        if resp.status_code == 200:
-                            with open(cover_path, 'wb') as imgf:
-                                imgf.write(resp.content)
-                            print(f"[DEBUG] Couverture téléchargée : {cover_path}")
-                            # Rafraîchir la vignette
-                            self.update_thumbnail(cover_path)
-                            
-                            # Afficher un message de confirmation
-                            from PySide6.QtWidgets import QMessageBox
-                            QMessageBox.information(None, "Succès", f"Couverture téléchargée pour {manga_name}")
-                            
-                            # Sauvegarder les informations AniList si pas déjà fait
-                            anilist_file = os.path.join(target_path, '.anilist.json')
-                            if not os.path.exists(anilist_file):
-                                try:
-                                    with open(anilist_file, 'w', encoding='utf-8') as f:
-                                        json.dump(info, f, ensure_ascii=False, indent=2)
-                                    print(f"[DEBUG] Informations API sauvegardées")
-                                except Exception as e:
-                                    print(f"[DEBUG] Erreur sauvegarde API : {e}")
+                        # Pour les fichiers, utiliser l'alias si disponible, sinon le nom du fichier
+                        alias = get_file_alias(self.path)
+                        if alias:
+                            manga_name = alias
                         else:
-                            print(f"[DEBUG] Erreur téléchargement couverture : {resp.status_code}")
-                            if resp.status_code == 404:
-                                print(f"[DEBUG] Couverture introuvable sur le serveur : {cover_url}")
-                            # Afficher un message d'erreur spécifique
-                            from PySide6.QtWidgets import QMessageBox
-                            if resp.status_code == 404:
-                                QMessageBox.warning(None, "Couverture introuvable", f"La couverture pour {manga_name} n'est plus disponible sur le serveur")
-                            else:
-                                QMessageBox.warning(None, "Erreur de téléchargement", f"Impossible de télécharger la couverture pour {manga_name} (Erreur {resp.status_code})")
-                    except Exception as e:
-                        print(f"[DEBUG] Exception téléchargement couverture : {e}")
-                        # Afficher un message d'erreur pour les exceptions réseau
-                        from PySide6.QtWidgets import QMessageBox
-                        QMessageBox.warning(None, "Erreur réseau", f"Erreur de connexion lors du téléchargement de la couverture pour {manga_name}")
-                else:
-                    print(f"[DEBUG] Aucune couverture trouvée pour : {manga_name}")
-                    # Afficher un message d'erreur
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList ou MangaDex")
-            
-            download_cover_action = menu.addAction("Download Cover")
-            download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
-            
-            # Ajouter l'option Cover From My Computer
-            def cover_from_computer():
-                if not self.path:
-                    return
+                            manga_name = os.path.splitext(os.path.basename(self.path))[0]
+                        target_path = os.path.dirname(self.path)
                 
-                # Ouvrir le sélecteur de fichier pour choisir une image
-                from PySide6.QtWidgets import QFileDialog
-                image_path, _ = QFileDialog.getOpenFileName(
-                    None,
-                    "Choisir une image de couverture",
-                    "",
-                    "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
-                )
+                    debug(f"[DEBUG] Tentative de téléchargement de couverture pour : {manga_name}")
                 
-                if image_path and os.path.exists(image_path):
-                    try:
-                        # Déterminer le chemin de destination
+                    # Récupérer les informations depuis AniList puis MangaDex si pas trouvé
+                    info = fetch_manga_info(manga_name)
+                    if info and info.get('cover'):
+                        cover_url = info['cover']
+                        thumb_dir = os.path.join(target_path, '.thumbnails')
+                        try:
+                            os.makedirs(thumb_dir, exist_ok=True)
+                        except OSError as e:
+                            print(f"Impossible de créer le dossier de vignettes : {thumb_dir}. Erreur : {e}")
+                            return
+                    
                         if os.path.isdir(self.path):
                             # Pour les dossiers, sauvegarder comme _folder_thumb.png
-                            target_path = self.path
-                            thumb_dir = os.path.join(target_path, '.thumbnails')
                             cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
                         else:
                             # Pour les fichiers, sauvegarder avec le nom du fichier
-                            target_path = os.path.dirname(self.path)
-                            thumb_dir = os.path.join(target_path, '.thumbnails')
                             base_name = os.path.splitext(os.path.basename(self.path))[0]
                             cover_path = os.path.join(thumb_dir, base_name + '.png')
-                        
-                        # Créer le dossier de vignettes si nécessaire
-                        os.makedirs(thumb_dir, exist_ok=True)
-                        
-                        # Charger et redimensionner l'image
-                        pixmap = QPixmap(image_path)
-                        if not pixmap.isNull():
-                            # Redimensionner à la taille standard des vignettes (400x560)
-                            scaled_pixmap = pixmap.scaled(
-                                400, 560, 
-                                Qt.AspectRatioMode.KeepAspectRatio, 
-                                Qt.TransformationMode.SmoothTransformation
-                            )
-                            scaled_pixmap.save(cover_path, "PNG", quality=95)
+                    
+                        try:
+                            resp = requests.get(cover_url, timeout=10)
+                            if resp.status_code == 200:
+                                with open(cover_path, 'wb') as imgf:
+                                    imgf.write(resp.content)
+                                mark_cover_as_custom(cover_path)
+                                debug(f"[DEBUG] Couverture téléchargée : {cover_path}")
+                                # Rafraîchir la vignette
+                                self.update_thumbnail(cover_path)
                             
-                            # Rafraîchir la vignette
-                            self.update_thumbnail(cover_path)
+                                # Afficher un message de confirmation
+                                from PySide6.QtWidgets import QMessageBox
+                                QMessageBox.information(None, "Succès", f"Couverture téléchargée pour {manga_name}")
                             
-                            # Afficher un message de confirmation
+                                # Sauvegarder les informations AniList si pas déjà fait
+                                anilist_file = os.path.join(target_path, '.anilist.json')
+                                if not os.path.exists(anilist_file):
+                                    try:
+                                        with open(anilist_file, 'w', encoding='utf-8') as f:
+                                            json.dump(info, f, ensure_ascii=False, indent=2)
+                                        debug(f"[DEBUG] Informations API sauvegardées")
+                                    except Exception as e:
+                                        debug(f"[DEBUG] Erreur sauvegarde API : {e}")
+                            else:
+                                debug(f"[DEBUG] Erreur téléchargement couverture : {resp.status_code}")
+                                if resp.status_code == 404:
+                                    debug(f"[DEBUG] Couverture introuvable sur le serveur : {cover_url}")
+                                # Afficher un message d'erreur spécifique
+                                from PySide6.QtWidgets import QMessageBox
+                                if resp.status_code == 404:
+                                    QMessageBox.warning(None, "Couverture introuvable", f"La couverture pour {manga_name} n'est plus disponible sur le serveur")
+                                else:
+                                    QMessageBox.warning(None, "Erreur de téléchargement", f"Impossible de télécharger la couverture pour {manga_name} (Erreur {resp.status_code})")
+                        except Exception as e:
+                            debug(f"[DEBUG] Exception téléchargement couverture : {e}")
+                            # Afficher un message d'erreur pour les exceptions réseau
                             from PySide6.QtWidgets import QMessageBox
-                            QMessageBox.information(
-                                None, 
-                                "Succès", 
-                                f"Couverture personnalisée ajoutée avec succès"
-                            )
-                        else:
+                            QMessageBox.warning(None, "Erreur réseau", f"Erreur de connexion lors du téléchargement de la couverture pour {manga_name}")
+                    else:
+                        debug(f"[DEBUG] Aucune couverture trouvée pour : {manga_name}")
+                        # Afficher un message d'erreur
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList ou MangaDex")
+            
+                download_cover_action = menu.addAction("Download Cover")
+                download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
+            
+                # Ajouter l'option Cover From My Computer
+                def cover_from_computer():
+                    if not self.path:
+                        return
+                
+                    # Ouvrir le sélecteur de fichier pour choisir une image
+                    from PySide6.QtWidgets import QFileDialog
+                    image_path, _ = QFileDialog.getOpenFileName(
+                        None,
+                        "Choisir une image de couverture",
+                        "",
+                        "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+                    )
+                
+                    if image_path and os.path.exists(image_path):
+                        try:
+                            # Déterminer le chemin de destination
+                            if os.path.isdir(self.path):
+                                # Pour les dossiers, sauvegarder comme _folder_thumb.png
+                                target_path = self.path
+                                thumb_dir = os.path.join(target_path, '.thumbnails')
+                                cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
+                            else:
+                                # Pour les fichiers, sauvegarder avec le nom du fichier
+                                target_path = os.path.dirname(self.path)
+                                thumb_dir = os.path.join(target_path, '.thumbnails')
+                                base_name = os.path.splitext(os.path.basename(self.path))[0]
+                                cover_path = os.path.join(thumb_dir, base_name + '.png')
+                        
+                            # Créer le dossier de vignettes si nécessaire
+                            os.makedirs(thumb_dir, exist_ok=True)
+                        
+                            # Charger l'image en conservant sa pleine résolution
+                            if save_cover_thumbnail(QImage(image_path), cover_path):
+                                mark_cover_as_custom(cover_path)
+                                # Rafraîchir la vignette
+                                self.update_thumbnail(cover_path)
+                            
+                                # Afficher un message de confirmation
+                                from PySide6.QtWidgets import QMessageBox
+                                QMessageBox.information(
+                                    None, 
+                                    "Succès", 
+                                    f"Couverture personnalisée ajoutée avec succès"
+                                )
+                            else:
+                                QMessageBox.warning(
+                                    None, 
+                                    "Erreur", 
+                                    "Impossible de charger l'image sélectionnée"
+                                )
+                        except Exception as e:
+                            debug(f"[DEBUG] Erreur lors de l'ajout de la couverture : {e}")
+                            from PySide6.QtWidgets import QMessageBox
                             QMessageBox.warning(
                                 None, 
                                 "Erreur", 
-                                "Impossible de charger l'image sélectionnée"
+                                f"Erreur lors de l'ajout de la couverture : {e}"
                             )
-                    except Exception as e:
-                        print(f"[DEBUG] Erreur lors de l'ajout de la couverture : {e}")
-                        from PySide6.QtWidgets import QMessageBox
-                        QMessageBox.warning(
-                            None, 
-                            "Erreur", 
-                            f"Erreur lors de l'ajout de la couverture : {e}"
-                        )
             
-            cover_from_computer_action = menu.addAction("Cover From My Computer")
-            cover_from_computer_action.triggered.connect(cover_from_computer)
+                cover_from_computer_action = menu.addAction("Cover From My Computer")
+                cover_from_computer_action.triggered.connect(cover_from_computer)
             
-            explorer_action = menu.addAction("Open in Explorer")
-            explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
-            remove_action = menu.addAction("Remove from bookshelf")
-            remove_action.triggered.connect(lambda checked=False, p=self.path: self.remove_requested.emit(p))
-            menu_btn.clicked.connect(lambda: menu.exec(menu_btn.mapToGlobal(menu_btn.rect().bottomLeft())))
-    def update_image(self):
+                explorer_action = menu.addAction("Open in Explorer")
+                explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
+                remove_action = menu.addAction("Remove from bookshelf")
+                remove_action.triggered.connect(lambda checked=False, p=self.path: self.remove_requested.emit(p))
+                return menu
+
+            menu_btn.clicked.connect(lambda: build_menu().exec(
+                menu_btn.mapToGlobal(menu_btn.rect().bottomLeft())))
+
+    def _device_pixel_ratio(self):
+        """Ratio de pixels physiques de l'écran qui affiche la vignette."""
+        handle = self.window().windowHandle() if self.window() else None
+        if handle is not None:
+            return handle.devicePixelRatio()
+        screen = QApplication.primaryScreen()
+        return screen.devicePixelRatio() if screen else 1.0
+
+    def _inner_size(self):
+        """Zone utile du label, bordure déduite."""
+        return (max(1, self.thumb_width - 2 * THUMB_BORDER_WIDTH),
+                max(1, self.thumb_height - 2 * THUMB_BORDER_WIDTH))
+
+    def _cover_pixmap(self, image, ratio):
+        """Rend la couverture à la résolution physique exacte du label.
+
+        Le pixmap est produit en pixels écran puis étiqueté avec le
+        devicePixelRatio : Qt le recopie tel quel au lieu de le rééchantillonner.
+        """
+        w, h = self._inner_size()
+        dw, dh = max(1, round(w * ratio)), max(1, round(h * ratio))
+        canvas = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        radius = THUMB_CORNER_RADIUS * ratio
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, 0, dw, dh), radius, radius)
+        painter.setClipPath(clip)
+        painter.drawImage(0, 0, fit_cover(image, dw, dh))
+        painter.end()
+        pixmap = QPixmap.fromImage(canvas)
+        pixmap.setDevicePixelRatio(ratio)
+        return pixmap
+
+    def _placeholder_pixmap(self, background, text, text_color, ratio):
+        """Vignette de repli, rendue elle aussi à la résolution de l'écran."""
+        w, h = self._inner_size()
+        pixmap = QPixmap(max(1, round(w * ratio)), max(1, round(h * ratio)))
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(background)
+        painter = QPainter(pixmap)
+        painter.setPen(text_color)
+        painter.drawText(QRect(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return pixmap
+
+    def _cached_cover(self, ratio):
+        """Pochette prête à afficher, mémorisée pour toute l'application.
+
+        Les grilles sont reconstruites en entier à chaque frappe dans la
+        recherche et à chaque retour de page ; sans ce cache, chaque PNG de
+        600x840 serait redécodé à chaque fois.
+        """
+        if not self.thumb_path:
+            return None
         try:
-            print(f"Tentative de chargement de l'image: {self.thumb_path}")
-            pixmap = QPixmap(self.thumb_path)
-            if pixmap.isNull():
-                print(f"Image nulle pour: {self.thumb_path}")
-                default_pixmap = QPixmap(self.thumb_width, self.thumb_height)
-                default_pixmap.fill(QColor(240, 240, 240))
-                painter = QPainter(default_pixmap)
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(
-                    default_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "No\nPreview\nAvailable"
-                )
-                painter.end()
-                scaled_pixmap = default_pixmap.scaled(
-                    self.thumb_width, self.thumb_height, Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.img_label.setPixmap(scaled_pixmap)
-            else:
-                print(f"Image chargée avec succès: {self.thumb_path}")
-                scaled_pixmap = pixmap.scaled(self.thumb_width, self.thumb_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                self.img_label.setPixmap(scaled_pixmap)
+            stamp = os.path.getmtime(self.thumb_path)
+        except OSError:
+            return None
+        key = (self.thumb_path, stamp, self.thumb_width, self.thumb_height, ratio)
+        pixmap = ThumbnailWidget._cover_cache.get(key)
+        if pixmap is None:
+            image = QImage(self.thumb_path)
+            if image.isNull():
+                return None
+            pixmap = self._cover_pixmap(image, ratio)
+            if len(ThumbnailWidget._cover_cache) >= ThumbnailWidget.COVER_CACHE_MAX:
+                ThumbnailWidget._cover_cache.clear()
+            ThumbnailWidget._cover_cache[key] = pixmap
+        return pixmap
+
+    def update_image(self):
+        ratio = self._device_pixel_ratio()
+        self._rendered_ratio = ratio
+        try:
+            pixmap = self._cached_cover(ratio)
+            if pixmap is None:
+                debug(f"[DEBUG] Aucune image exploitable pour : {self.thumb_path}")
+                pixmap = self._placeholder_pixmap(
+                    QColor(240, 240, 240), "No\nPreview\nAvailable",
+                    QColor(100, 100, 100), ratio)
+            self.img_label.setPixmap(pixmap)
         except Exception as e:
             print(f"Erreur lors du chargement de l'image {self.thumb_path}: {e}")
             try:
-                error_pixmap = QPixmap(self.thumb_width, self.thumb_height)
-                error_pixmap.fill(QColor(255, 200, 200))
-                painter = QPainter(error_pixmap)
-                painter.setPen(QColor(150, 0, 0))
-                painter.drawText(error_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Error\nLoading\nImage")
-                painter.end()
-                self.img_label.setPixmap(error_pixmap)
+                self.img_label.setPixmap(self._placeholder_pixmap(
+                    QColor(255, 200, 200), "Error\nLoading\nImage", QColor(150, 0, 0), ratio))
             except Exception as e:
                 self.img_label.setText("Error\nImage")
                 self.img_label.setStyleSheet("border: 4px solid #111; "
@@ -538,6 +966,15 @@ class ThumbnailWidget(QWidget):
                                              "color: #666; "
                                              "font-size: 12px;")
                 print(f"Erreur fatale lors de la création de l'image d'erreur: {e}")
+
+    def showEvent(self, event):
+        """Re-rend la vignette si elle atterrit sur un écran d'un autre DPI."""
+        super().showEvent(event)
+        # _rendered_ratio est None tant que la pochette n'a pas été peinte :
+        # ne pas déclencher le chargement ici, c'est tout l'intérêt du différé.
+        if self._rendered_ratio is not None and self._device_pixel_ratio() != self._rendered_ratio:
+            self.update_image()
+
     def update_thumbnail(self, new_thumb_path):
         try:
             self.thumb_path = new_thumb_path
@@ -568,66 +1005,151 @@ class ResponsiveGridView(QWidget):
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(20)
         self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)  # centrer horizontalement
-        grid_widget = QWidget()
-        grid_widget.setLayout(self.grid_layout)
+        self.grid_widget = QWidget()
+        self.grid_widget.setLayout(self.grid_layout)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setWidget(grid_widget)
+        self.scroll_area.setWidget(self.grid_widget)
         self.scroll_area.setStyleSheet(SCROLL_AREA_STYLE)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.scroll_area)
         self._items = []
+        self._columns = 0
+        # Un redimensionnement émet des dizaines d'événements : on attend la fin
+        # du geste avant de replacer les vignettes.
+        self._relayout_timer = QTimer(self)
+        self._relayout_timer.setSingleShot(True)
+        self._relayout_timer.timeout.connect(self.refresh_grid)
+
+    def column_count(self):
+        width = self.width()
+        return max(1, width // (THUMB_DISPLAY_SIZE[0] + 20)) if width > 0 else 1
 
     def set_items(self, widgets):
         # Nettoyer les anciens widgets
         for widget in self._items:
             self.grid_layout.removeWidget(widget)
             widget.deleteLater()
-        
         self._items = widgets
-        self.refresh_grid()
+        self.refresh_grid(force=True)
 
-    def refresh_grid(self):
-        # Effacer les anciens widgets de la grille pour la reconstruire
-        while self.grid_layout.count():
-            item = self.grid_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
+    def refresh_grid(self, force=False):
+        """Replace les vignettes en grille.
 
-        vignette_w = 200 + 20
-        n_col = max(1, self.width() // vignette_w if self.width() > 0 else 1)
-        
-        for i, widget in enumerate(self._items):
-             self.grid_layout.addWidget(widget, i // n_col, i % n_col)
-    
+        Vider puis remplir un QGridLayout coûte du temps quadratique : on ne le
+        refait que si le nombre de colonnes a réellement changé, et sans
+        repeindre entre chaque ajout.
+        """
+        columns = self.column_count()
+        if not force and columns == self._columns:
+            return
+        self._columns = columns
+        self.grid_widget.setUpdatesEnabled(False)
+        try:
+            while self.grid_layout.count():
+                item = self.grid_layout.takeAt(0)
+                if item.widget():
+                    item.widget().setParent(None)
+            for i, widget in enumerate(self._items):
+                self.grid_layout.addWidget(widget, i // columns, i % columns)
+        finally:
+            self.grid_widget.setUpdatesEnabled(True)
+
     def resizeEvent(self, event):
-        self.refresh_grid()
         super().resizeEvent(event)
+        self._relayout_timer.start(80)
 
 # =====================================================================================
 # PAGE BIBLIOTHEQUE
 # =====================================================================================
 class ProgressDialog(QDialog):
+    """Carte de progression flottante, sans cadre système.
+
+    Le libellé est un nom de fichier : il est coupé proprement plutôt que de
+    déborder d'une boîte à largeur fixe.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Génération des vignettes")
         self.setModal(True)
-        self.setFixedSize(520, 120)
-        layout = QVBoxLayout(self)
-        self.label = QLabel("Préparation...")
-        self.label.setStyleSheet("font-size: 18px; margin-top: 20px;")
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._message = ""
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(PROGRESS_CARD_MARGIN, PROGRESS_CARD_MARGIN,
+                                 PROGRESS_CARD_MARGIN, PROGRESS_CARD_MARGIN + 4)
+        card = QWidget()
+        card.setObjectName("progressCard")
+        card.setStyleSheet(PROGRESS_CARD_STYLE)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 6)
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 20, 24, 22)
+        layout.setSpacing(5)
+
+        head = QHBoxLayout()
+        head.setSpacing(12)
+        self.title_label = QLabel(self.windowTitle())
+        self.title_label.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self.title_label.setStyleSheet(PROGRESS_TITLE_STYLE)
+        self.percent_label = QLabel("0 %")
+        self.percent_label.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self.percent_label.setStyleSheet(PROGRESS_PERCENT_STYLE)
+        head.addWidget(self.title_label)
+        head.addStretch()
+        head.addWidget(self.percent_label)
+        layout.addLayout(head)
+
+        self.label = QLabel("Préparation…")
+        self.label.setFont(QFont("Inter", 10))
+        self.label.setStyleSheet(PROGRESS_MESSAGE_STYLE)
         layout.addWidget(self.label)
+        layout.addSpacing(8)
+
         self.progress = QProgressBar()
-        self.progress.setMinimum(0)
-        self.progress.setMaximum(100)
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(8)
+        self.progress.setStyleSheet(PROGRESS_BAR_STYLE)
         layout.addWidget(self.progress)
 
+        self.setFixedSize(PROGRESS_CARD_WIDTH, self.sizeHint().height())
+
+    def setWindowTitle(self, title):
+        super().setWindowTitle(title)
+        # Appelé une première fois avant que la carte n'existe.
+        if hasattr(self, "title_label"):
+            self.title_label.setText(title)
+
+    def showEvent(self, event):
+        """Sans cadre système, Qt ne recentre pas la boîte sur la fenêtre."""
+        super().showEvent(event)
+        parent = self.parentWidget()
+        if parent is not None:
+            self.move(parent.window().frameGeometry().center() - self.rect().center())
+
+    def _elided(self, text):
+        """Coupe le nom de fichier à la largeur de la carte."""
+        available = PROGRESS_CARD_WIDTH - 2 * PROGRESS_CARD_MARGIN - 48
+        return self.label.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, available)
+
     def update_message(self, msg, value=None):
-        self.label.setText(msg)
+        self._message = msg
+        self.label.setText(self._elided(msg))
         if value is not None:
             self.progress.setValue(value)
+            self.percent_label.setText(f"{value} %")
         QApplication.processEvents()
+
 
 class BookShelfPage(QWidget):
     folder_selected = Signal(str)
@@ -642,70 +1164,127 @@ class BookShelfPage(QWidget):
         self.selected_items = set()
         self.load_library()
         self.setup_ui()
-        self.refresh_shelf()
+        # La grille est construite par show_bookshelf : la remplir ici allongeait
+        # le démarrage d'une page que l'on ne voit pas encore.
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        # Création du header avec image de fond
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        # En-tête : collage de fond, voile sombre, puis contenu en blanc par-dessus.
         header_widget = RoundedHeaderWidget()
-        header_widget.setFixedHeight(80)
+        header_widget.radius = HEADER_RADIUS
+        header_widget.setFixedHeight(HEADER_HEIGHT)
         header_widget.set_background_image(resource_path('assets/images/header.png'))
+        header_widget.set_scrim()
 
         header = QHBoxLayout(header_widget)
-        header.setContentsMargins(20, 20, 20, 20)
+        header.setContentsMargins(18, 0, 18, 0)
+        header.setSpacing(16)
 
-        # Affichage du titre Bookshelf (simple)
+        # Retour : isolé à gauche, là où on le cherche.
+        header.addWidget(make_back_btn(self.back_clicked.emit))
+
+        # Titre + compteur de collections.
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(0)
         title = QLabel("BookShelf")
-        title.setFont(QFont("Inter", 32, QFont.Weight.Bold))
+        title.setFont(QFont("Inter", 20, QFont.Weight.Bold))
         title.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
-        header.addWidget(title)
+        self.count_label = QLabel()
+        self.count_label.setFont(QFont("Inter", 9))
+        self.count_label.setStyleSheet(HEADER_SUBTITLE_STYLE)
+        # Hauteur figée sur le texte : sinon la colonne étire les deux labels et
+        # rouvre un blanc entre le titre et le compteur.
+        for label in (title, self.count_label):
+            label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        title.setFixedHeight(title.fontMetrics().ascent() + 3)
+        title_col.addStretch()
+        title_col.addWidget(title)
+        title_col.addWidget(self.count_label)
+        title_col.addStretch()
+        header.addLayout(title_col)
         header.addStretch()
 
-        filter_bar = QHBoxLayout()
-        filter_bar.setSpacing(10)
+        # Actions secondaires réunies dans une seule pilule translucide.
+        toolbar = make_toolbar_group()
+        filter_bar = toolbar.layout()
 
-        # Le bouton retour est le premier du groupe d'icônes à droite
-        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
-        filter_bar.addWidget(back_btn)
-
-        filter_btn = make_header_btn(resource_path("assets/icons/funnel-white.svg"), "Filtrer", lambda: None)
+        filter_btn = make_toolbar_btn(resource_path("assets/icons/funnel-white.svg"),
+                                      "Filtrer", lambda: None)
         filter_bar.addWidget(filter_btn)
 
         # Bouton Sélectionner (sélection multiple)
-        self.select_btn = make_header_btn(resource_path("assets/icons/check2-all-white.svg"), "Sélectionner des fichiers", self.toggle_selection_mode)
+        self.select_btn = make_toolbar_btn(resource_path("assets/icons/check2-all-white.svg"),
+                                           "Sélectionner des fichiers",
+                                           self.toggle_selection_mode, checkable=True)
         filter_bar.addWidget(self.select_btn)
 
-        from PySide6.QtWidgets import QLineEdit
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("Rechercher...")
+        self.search_field.setPlaceholderText("Rechercher une collection")
+        self.search_field.setStyleSheet(HEADER_SEARCH_STYLE)
+        self.search_field.setFixedHeight(HEADER_BTN_SIZE)
         self.search_field.setFixedWidth(0)
-        self.search_field.setVisible(False)
+        placeholder = self.search_field.palette()
+        placeholder.setColor(QPalette.ColorRole.PlaceholderText, QColor(255, 255, 255, 120))
+        self.search_field.setPalette(placeholder)
         self.search_field.textChanged.connect(self.refresh_shelf)
         filter_bar.addWidget(self.search_field)
-        
+
+        # Le champ se déplie à l'ouverture au lieu d'apparaître d'un coup.
+        self._search_anim = QPropertyAnimation(self.search_field, b"maximumWidth", self)
+        self._search_anim.setDuration(180)
+        self._search_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # Animer maximumWidth ne suffit pas : la largeur retomberait sur le
+        # sizeHint du champ. On recopie la valeur animée en largeur fixe.
+        self._search_anim.valueChanged.connect(
+            lambda value: self.search_field.setFixedWidth(int(value)))
+        # La dernière image n'est pas garantie : on cale la largeur finale à la main,
+        # sinon le champ reste ouvert de quelques pixels.
+        self._search_anim.finished.connect(
+            lambda: self.search_field.setFixedWidth(int(self._search_anim.endValue())))
+
         def toggle_search():
-            if self.search_field.isVisible():
-                self.search_field.setVisible(False)
-                self.search_field.setFixedWidth(0)
-                self.search_field.setText("")
-            else:
-                self.search_field.setVisible(True)
-                self.search_field.setFixedWidth(200)
+            # L'état vient du bouton, déjà basculé par le clic : lire la largeur
+            # courante donnerait un faux etat pendant l'animation.
+            opened = search_btn.isChecked()
+            self._search_anim.stop()
+            self._search_anim.setStartValue(self.search_field.maximumWidth())
+            self._search_anim.setEndValue(HEADER_SEARCH_WIDTH if opened else 0)
+            self._search_anim.start()
+            if opened:
                 self.search_field.setFocus()
-        search_btn = make_header_btn(resource_path("assets/icons/search-white.svg"), "Rechercher", toggle_search)
+            else:
+                # clear() relance refresh_shelf : inutile si le champ était vide,
+                # et la reconstruction de la grille saccaderait l'animation.
+                if self.search_field.text():
+                    self.search_field.clear()
+                self.search_field.clearFocus()
+
+        search_btn = make_toolbar_btn(resource_path("assets/icons/search-white.svg"),
+                                      "Rechercher", toggle_search, checkable=True)
         filter_bar.addWidget(search_btn)
 
         self.sort_az = True
-        self.sort_btn = make_header_btn(resource_path("assets/icons/sort-alpha-down-white.svg"), "Trier A-Z", self.toggle_sort)
+        self.sort_btn = make_toolbar_btn(resource_path("assets/icons/sort-alpha-down-white.svg"),
+                                         "Trier A-Z", self.toggle_sort)
         filter_bar.addWidget(self.sort_btn)
 
-        header.addLayout(filter_bar)
+        header.addWidget(toolbar)
 
-        add_btn = make_header_btn(resource_path("assets/icons/folder-plus-white.svg"), "Ajouter un dossier", self.add_folder_clicked.emit)
+        # Action principale, la seule en couleur pleine.
+        add_btn = QPushButton("  Ajouter")
+        add_btn.setIcon(QIcon(resource_path("assets/icons/folder-plus-white.svg")))
+        add_btn.setIconSize(QSize(18, 18))
+        add_btn.setFixedHeight(HEADER_TOOLBAR_HEIGHT)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(HEADER_PRIMARY_BUTTON_STYLE)
+        add_btn.setToolTip("Ajouter un dossier")
+        add_btn.clicked.connect(self.add_folder_clicked.emit)
         header.addWidget(add_btn)
-        header.addSpacing(20)
-        
+
         layout.addWidget(header_widget)
         layout.addWidget(self.grid_view)
 
@@ -734,10 +1313,10 @@ class BookShelfPage(QWidget):
                 self.refresh_shelf()
                 # --- Récupération automatique AniList/MangaDex ---
                 manga_name = os.path.basename(folder_path)
-                print(f"[DEBUG API] Tentative de récupération pour : {manga_name}")
+                debug(f"[DEBUG API] Tentative de récupération pour : {manga_name}")
                 info = fetch_manga_info(manga_name)
                 if info:
-                    print(f"[DEBUG API] Succès, création de .anilist.json")
+                    debug(f"[DEBUG API] Succès, création de .anilist.json")
                     import json
                     try:
                         with open(os.path.join(folder_path, '.anilist.json'), 'w', encoding='utf-8') as f:
@@ -758,11 +1337,11 @@ class BookShelfPage(QWidget):
                                 if resp.status_code == 200:
                                     with open(banner_path, 'wb') as imgf:
                                         imgf.write(resp.content)
-                                    print(f"[DEBUG API] Bannière téléchargée : {banner_path}")
+                                    debug(f"[DEBUG API] Bannière téléchargée : {banner_path}")
                                 else:
-                                    print(f"[DEBUG API] Erreur téléchargement bannière : {resp.status_code}")
+                                    debug(f"[DEBUG API] Erreur téléchargement bannière : {resp.status_code}")
                             except Exception as e:
-                                print(f"[DEBUG API] Exception téléchargement bannière : {e}")
+                                debug(f"[DEBUG API] Exception téléchargement bannière : {e}")
                         # Télécharger la couverture comme vignette du dossier
                         cover_url = info.get('cover')
                         if cover_url:
@@ -779,15 +1358,15 @@ class BookShelfPage(QWidget):
                                 if resp.status_code == 200:
                                     with open(thumb_path, 'wb') as imgf:
                                         imgf.write(resp.content)
-                                    print(f"[DEBUG API] Vignette téléchargée : {thumb_path}")
+                                    debug(f"[DEBUG API] Vignette téléchargée : {thumb_path}")
                                 else:
-                                    print(f"[DEBUG API] Erreur téléchargement vignette : {resp.status_code}")
+                                    debug(f"[DEBUG API] Erreur téléchargement vignette : {resp.status_code}")
                             except Exception as e:
-                                print(f"[DEBUG API] Exception téléchargement vignette : {e}")
+                                debug(f"[DEBUG API] Exception téléchargement vignette : {e}")
                     except Exception as e:
-                        print(f"[DEBUG API] Erreur lors de l'écriture du fichier : {e}")
+                        debug(f"[DEBUG API] Erreur lors de l'écriture du fichier : {e}")
                 else:
-                    print(f"[DEBUG API] Aucun résultat pour : {manga_name}")
+                    debug(f"[DEBUG API] Aucun résultat pour : {manga_name}")
             except OSError as e:
                 error_msg = (f"Impossible d'accéder au dossier ou de créer le répertoire des vignettes.\n\n"
                              f"Vérifiez que le disque est bien connecté et que vous avez les droits d'écriture.\n\n"
@@ -807,14 +1386,13 @@ class BookShelfPage(QWidget):
                 continue  # Ignore les dossiers qui n'existent plus
             name = entry.get("alias", os.path.basename(path))  # Utilise l'alias s'il existe
             if not search or search in name.lower():
-                thumb_path = get_thumbnail_path(None, path)
-                if thumb_path:
-                    vignette = ThumbnailWidget(thumb_path, name, path=path)
-                else:
-                    default_path = create_default_thumbnail() or "assets/images/manga_sample.png"
-                    vignette = ThumbnailWidget(default_path, name, path=path)
+                thumb_path = ensure_folder_thumbnail(path)
+                language = entry.get("language")
+                if not thumb_path:
+                    thumb_path = create_default_thumbnail() or "assets/images/manga_sample.png"
+                vignette = ThumbnailWidget(thumb_path, name, path=path, language=language)
                 def on_folder_selected(p=path):
-                    print(f"[DEBUG] Signal folder_selected émis avec : {p}")
+                    debug(f"[DEBUG] Signal folder_selected émis avec : {p}")
                     self.folder_selected.emit(p)
                 
                 # Ajout case à cocher si mode sélection
@@ -836,7 +1414,8 @@ class BookShelfPage(QWidget):
                             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
                             self.select_btn.setToolTip("Sélectionner des dossiers")
                     checkbox.stateChanged.connect(on_state_changed)
-                    vignette = ThumbnailWidget(thumb_path, name, path=path, checkbox=checkbox)
+                    vignette = ThumbnailWidget(thumb_path, name, path=path, checkbox=checkbox,
+                                               language=language)
                     vignette.clicked.connect(on_folder_selected)
                 
                 # Connecter les signaux une seule fois
@@ -844,14 +1423,13 @@ class BookShelfPage(QWidget):
                 vignette.remove_requested.connect(self.remove_folder)
                 vignette.alias_requested.connect(self.set_folder_alias)
                 vignette.cover_requested.connect(self.set_folder_cover)
-                widgets.append(vignette)
-            else:
+                vignette.language_requested.connect(self.set_folder_language)
                 widgets.append(vignette)
             valid_library.append(entry)
         if len(valid_library) != len(self.library):
             self.library = valid_library
             self.save_library()
-        print("[DEBUG] Aucun fichier ou dossier supporté trouvé dans ce dossier.")
+        debug("[DEBUG] Aucun fichier ou dossier supporté trouvé dans ce dossier.")
         self.grid_view.set_items(widgets)
         # Mettre à jour l'icône du bouton après le refresh
         if self.selection_mode:
@@ -864,6 +1442,10 @@ class BookShelfPage(QWidget):
         else:
             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
             self.select_btn.setToolTip("Sélectionner des fichiers")
+        self.select_btn.setChecked(self.selection_mode)
+        count = len(valid_library)
+        self.count_label.setText("Aucune collection" if count == 0
+                                 else f"{count} collection{'s' if count > 1 else ''}")
 
     def remove_folder(self, folder_path):
         self.library = [d for d in self.library if d["path"] != folder_path]
@@ -889,10 +1471,10 @@ class BookShelfPage(QWidget):
             cover_path = os.path.join(thumb_dir, '_folder_thumb.png')
 
             try:
-                # Copier et redimensionner l'image pour qu'elle corresponde aux vignettes
-                pixmap = QPixmap(image_path)
-                scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                scaled_pixmap.save(cover_path, "PNG")
+                # Copier l'image en conservant sa pleine résolution
+                if not save_cover_thumbnail(QImage(image_path), cover_path):
+                    raise ValueError(f"Image de couverture illisible : {image_path}")
+                mark_cover_as_custom(cover_path)
 
                 # Mettre à jour la date de modification pour éviter l'écrasement
                 os.utime(cover_path, None)
@@ -900,6 +1482,42 @@ class BookShelfPage(QWidget):
                 self.refresh_shelf()
             except Exception as e:
                 print(f"Erreur lors de la définition de la couverture : {e}")
+
+    def reload_manga_info(self, folder_path, entry):
+        """Récupère la fiche du manga sous le nom courant, dans la bonne langue."""
+        title = entry.get("alias") or os.path.basename(folder_path)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            refresh_manga_info(folder_path, title, entry.get("language"))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def has_description(self, folder_path, language):
+        """Vrai si le synopsis est déjà en cache dans cette langue."""
+        try:
+            with open(os.path.join(folder_path, '.anilist.json'), 'r', encoding='utf-8') as f:
+                info = json.load(f)
+        except (OSError, ValueError):
+            return False
+        descriptions = info.get('descriptions')
+        if not isinstance(descriptions, dict):
+            return False
+        return any(descriptions.get(code) for code in description_candidates(language)[:-1] or ("en",))
+
+    def set_folder_language(self, folder_path, code):
+        """Langue d'une collection : rangée dans la bibliothèque, comme l'alias."""
+        for entry in self.library:
+            if entry["path"] == folder_path:
+                if code:
+                    entry["language"] = code
+                else:
+                    entry.pop("language", None)
+                self.save_library()
+                # Un synopsis déjà en cache dans cette langue évite l'appel réseau.
+                if code and not self.has_description(folder_path, code):
+                    self.reload_manga_info(folder_path, entry)
+                break
+        self.refresh_shelf()
 
     def set_folder_alias(self, folder_path, current_name):
         """Définit un alias pour un dossier"""
@@ -922,17 +1540,19 @@ class BookShelfPage(QWidget):
                 # Mettre à jour l'alias
                 entry["alias"] = new_alias.strip()
                 self.save_library()
+                # Le synopsis est cherché sous ce nom : il doit suivre.
+                self.reload_manga_info(folder_path, entry)
                 # Optimisation : ne régénérer la vignette que si le dossier contient des fichiers supportés
                 fichiers = [f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS)]
                 if fichiers:
-                    print(f"[DEBUG] Régénération de la vignette pour {folder_path} après changement d'alias.")
+                    debug(f"[DEBUG] Régénération de la vignette pour {folder_path} après changement d'alias.")
                     generate_all_thumbnails_for_folder(folder_path)
                 else:
-                    print(f"[DEBUG] Pas de fichiers supportés dans {folder_path}, pas de régénération de vignette.")
+                    debug(f"[DEBUG] Pas de fichiers supportés dans {folder_path}, pas de régénération de vignette.")
                 # Vérification de la présence de .anilist.json
                 anilist_file = os.path.join(folder_path, '.anilist.json')
                 if not os.path.exists(anilist_file):
-                    print(f"[DEBUG] Attention : .anilist.json absent dans {folder_path} après changement d'alias.")
+                    debug(f"[DEBUG] Attention : .anilist.json absent dans {folder_path} après changement d'alias.")
                 self.refresh_shelf()
 
     def toggle_sort(self):
@@ -957,41 +1577,52 @@ class BookShelfPage(QWidget):
             self.selected_items.clear()
             self.selection_mode = False
             self.refresh_shelf()
-            print(f"[DEBUG] Dossiers supprimés : {self.selected_items}")
+            debug(f"[DEBUG] Dossiers supprimés : {self.selected_items}")
         else:
             self.selection_mode = not self.selection_mode
             if not self.selection_mode:
                 self.selected_items.clear()
             self.refresh_shelf()
-            print(f"[DEBUG] Mode sélection : {self.selection_mode}")
+            debug(f"[DEBUG] Mode sélection : {self.selection_mode}")
 
-# === AJOUT : Fonction utilitaire globale pour les boutons d'icônes header ===
-def make_header_btn(icon_path, tooltip, callback):
+def make_toolbar_btn(icon_path, tooltip, callback, checkable=False):
+    """Bouton icône de la barre bibliothèque : plat, sans ombre, état actif en accent."""
     btn = QPushButton()
     btn.setIcon(QIcon(icon_path))
-    btn.setIconSize(QSize(32, 32))
-    btn.setFixedSize(48, 48)
-    btn.setStyleSheet(
-        """
-        QPushButton {
-            background: rgba(0,0,0,0.45);
-            border-radius: 24px;
-            border: none;
-        }
-        QPushButton:hover {
-            background: #95a5a6;
-            color: #222;
-        }
-        """
-    )
+    btn.setIconSize(QSize(19, 19))
+    btn.setFixedSize(HEADER_BTN_SIZE, HEADER_BTN_SIZE)
+    btn.setCheckable(checkable)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(HEADER_ICON_BUTTON_STYLE)
     btn.setToolTip(tooltip)
     btn.clicked.connect(callback)
-    shadow = QGraphicsDropShadowEffect()
-    shadow.setBlurRadius(12)
-    shadow.setColor(QColor(0, 0, 0, 200))
-    shadow.setOffset(0, 3)
-    btn.setGraphicsEffect(shadow)
     return btn
+
+
+def make_back_btn(callback):
+    """Retour : détaché de la pilule, mais de la même matière."""
+    btn = make_toolbar_btn(resource_path("assets/icons/arrow-left-white.png"),
+                           "Retour", callback)
+    btn.setFixedSize(HEADER_TOOLBAR_HEIGHT, HEADER_TOOLBAR_HEIGHT)
+    btn.setStyleSheet(HEADER_BACK_BUTTON_STYLE)
+    return btn
+
+
+def make_toolbar_group(*buttons):
+    """Pilule translucide qui réunit les actions d'un en-tête."""
+    toolbar = QWidget()
+    toolbar.setObjectName("headerToolbar")
+    toolbar.setStyleSheet(HEADER_TOOLBAR_STYLE)
+    toolbar.setFixedHeight(HEADER_TOOLBAR_HEIGHT)
+    # Sans taille fixe, la pilule absorbe l'espace libre et les icônes se dispersent.
+    toolbar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    row = QHBoxLayout(toolbar)
+    row.setContentsMargins(4, 4, 4, 4)
+    row.setSpacing(4)
+    for button in buttons:
+        row.addWidget(button)
+    return toolbar
+
 
 # =====================================================================================
 # PAGE DOSSIER (Vignettes PDF)
@@ -1053,41 +1684,23 @@ class FolderViewPage(QWidget):
         left_col.addStretch(1)
         header_layout.addLayout(left_col, 1)
 
-        # Colonne 2 : icônes alignées horizontalement au centre
+        # Colonne 2 : retour détaché, puis les actions réunies dans la pilule
         right_col = QHBoxLayout()
-        right_col.setSpacing(18)
+        right_col.setSpacing(14)
         right_col.setContentsMargins(0, 0, 0, 0)
-
-        right_col.addWidget(make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.navigate_back))
-        right_col.addWidget(make_header_btn(resource_path("assets/icons/palette-white.svg"), "Changer la bannière", self.set_header_background))
-        right_col.addWidget(make_header_btn(resource_path("assets/icons/arrow-clockwise-white.svg"), "Rafraîchir", self.refresh_folder))
+        right_col.addWidget(make_back_btn(self.navigate_back))
 
         # Bouton unique de sélection/suppression
-        self.select_btn = QPushButton()
-        self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-        self.select_btn.setIconSize(QSize(32, 32))
-        self.select_btn.setFixedSize(48, 48)
-        self.select_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: rgba(0,0,0,0.45);
-                border-radius: 24px;
-                border: none;
-            }
-            QPushButton:hover {
-                background: #95a5a6;
-                color: #222;
-            }
-            """
-        )
-        self.select_btn.setToolTip("Sélectionner des fichiers")
-        self.select_btn.clicked.connect(self.on_select_btn_clicked)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(12)
-        shadow.setColor(QColor(0, 0, 0, 200))
-        shadow.setOffset(0, 3)
-        self.select_btn.setGraphicsEffect(shadow)
-        right_col.addWidget(self.select_btn)
+        self.select_btn = make_toolbar_btn(resource_path("assets/icons/check2-all-white.svg"),
+                                           "Sélectionner des fichiers",
+                                           self.on_select_btn_clicked, checkable=True)
+        right_col.addWidget(make_toolbar_group(
+            make_toolbar_btn(resource_path("assets/icons/palette-white.svg"),
+                             "Changer la bannière", self.set_header_background),
+            make_toolbar_btn(resource_path("assets/icons/arrow-clockwise-white.svg"),
+                             "Rafraîchir", self.refresh_folder),
+            self.select_btn,
+        ))
         header_layout.addLayout(right_col)
 
         layout.addWidget(self.header_widget)
@@ -1099,6 +1712,10 @@ class FolderViewPage(QWidget):
         left_col = QVBoxLayout()
         left_col.setSpacing(16)
         self.anilist_desc_label = QLabel()
+        # Les synopsis AniList et MangaDex contiennent du HTML (<br>, <i>) :
+        # sans cela les balises s'affichaient telles quelles dans le texte.
+        self.anilist_desc_label.setTextFormat(Qt.TextFormat.RichText)
+        self.anilist_desc_label.setOpenExternalLinks(True)
         self.anilist_desc_label.setWordWrap(True)
         self.anilist_desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.anilist_desc_label.setStyleSheet("font-size: 15px; color: #444; margin-top: 10px;")
@@ -1144,12 +1761,13 @@ class FolderViewPage(QWidget):
             self.back_clicked.emit()
 
     def set_folder(self, folder_path, is_main_entry=True):
-        print(f"[DEBUG] Appel de set_folder avec folder_path = '{folder_path}'")
+        debug(f"[DEBUG] Appel de set_folder avec folder_path = '{folder_path}'")
         if is_main_entry:
             self.path_stack = [folder_path]
         self.folder_path = folder_path
         # Chercher l'alias dans la bibliothèque uniquement pour le dossier racine
         alias = None
+        language = None
         if len(self.path_stack) <= 1:
             try:
                 if os.path.exists(LIBRARY_FILE):
@@ -1158,6 +1776,7 @@ class FolderViewPage(QWidget):
                     for entry in library:
                         if entry["path"] == folder_path:
                             alias = entry.get("alias")
+                            language = entry.get("language")
                             break
             except Exception as e:
                 print(f"Erreur lecture alias: {e}")
@@ -1174,14 +1793,14 @@ class FolderViewPage(QWidget):
             try:
                 with open(anilist_file, 'r', encoding='utf-8') as f:
                     info = json.load(f)
-                print(f"[DEBUG] .anilist.json trouvé : {anilist_file}")
-                print(f"[DEBUG] Contenu .anilist.json : {info}")
-                desc = info.get('description', '')
+                debug(f"[DEBUG] .anilist.json trouvé : {anilist_file}")
+                debug(f"[DEBUG] Contenu .anilist.json : {info}")
+                desc = pick_description(info, language)
                 tags_list = info.get('tags', [])
             except Exception as e:
-                print(f"[DEBUG set_folder] Erreur lecture anilist.json: {e}")
+                debug(f"[DEBUG set_folder] Erreur lecture anilist.json: {e}")
         else:
-            print(f"[DEBUG] .anilist.json absent dans : {folder_path}")
+            debug(f"[DEBUG] .anilist.json absent dans : {folder_path}")
         self.anilist_desc_label.setText(desc)
         # Affichage des tags façon 'pills'
         # Nettoyer l'ancien contenu
@@ -1204,7 +1823,7 @@ class FolderViewPage(QWidget):
             # 1. Chercher une bannière AniList téléchargée
             banner_path = os.path.join(self.folder_path, '.thumbnails', '_header_banner.png')
             if os.path.exists(banner_path):
-                print(f"[AniList] Bannière trouvée : {banner_path}")
+                debug(f"[AniList] Bannière trouvée : {banner_path}")
                 self.header_widget.set_background_image(banner_path)
                 self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
                 self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
@@ -1231,7 +1850,7 @@ class FolderViewPage(QWidget):
                     print(f"[AniList] Erreur lecture couverture : {e}")
             # 3. Sinon, image personnalisée
             custom_bg_path = os.path.join(self.folder_path, "_header_bg.png")
-            print(f"Recherche de l'image de fond personnalisée: {custom_bg_path}")
+            debug(f"Recherche de l'image de fond personnalisée: {custom_bg_path}")
             if os.path.exists(custom_bg_path):
                 print(f"Image personnalisée trouvée: {custom_bg_path}")
                 self.header_widget.set_background_image(custom_bg_path)
@@ -1243,7 +1862,7 @@ class FolderViewPage(QWidget):
                 default_bg_path = "assets/images/header.png"
                 if os.path.exists(default_bg_path):
                     self.header_widget.set_background_image(default_bg_path)
-                    print("Image par défaut appliquée au header")
+                    debug("Image par défaut appliquée au header")
                     self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
                     self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
                 else:
@@ -1315,10 +1934,10 @@ class FolderViewPage(QWidget):
         widgets = []
         try:
             all_items = sorted(os.listdir(self.folder_path))
-            print(f"[DEBUG] Contenu du dossier {self.folder_path} : {all_items}")
+            debug(f"[DEBUG] Contenu du dossier {self.folder_path} : {all_items}")
         except FileNotFoundError:
             self.grid_view.set_items([])
-            print(f"[DEBUG] Dossier introuvable : {self.folder_path}")
+            debug(f"[DEBUG] Dossier introuvable : {self.folder_path}")
             return
         # Lire les alias du dossier courant
         import json
@@ -1333,6 +1952,7 @@ class FolderViewPage(QWidget):
         else:
             alias_map = {}
         fichiers_supportes = []
+        languages = load_language_map(self.folder_path)
         for item_name in all_items:
             if item_name.startswith('.'):
                 continue
@@ -1366,18 +1986,20 @@ class FolderViewPage(QWidget):
             # Cas 1: L'élément est un dossier
             if os.path.isdir(item_path):
                 fichiers_supportes.append(item_name)
-                thumb_path = get_thumbnail_path(None, folder_path=item_path)
+                thumb_path = ensure_folder_thumbnail(item_path)
                 if not thumb_path:
                     thumb_path = (create_default_thumbnail() or 
                                   "assets/images/manga_sample.png")
                 widget = ThumbnailWidget(
-                    thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox
+                    thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox,
+                    language=languages.get(item_name)
                 )
                 widget.clicked.connect(
                     functools.partial(self.on_item_clicked, item_path)
                 )
                 widget.alias_requested.connect(self.set_item_alias)
                 widget.remove_requested.connect(self.remove_item)
+                widget.language_requested.connect(self.set_item_language)
             # Cas 2: L'élément est un fichier supporté
             elif item_name.lower().endswith(ARCHIVE_EXTENSIONS):
                 fichiers_supportes.append(item_name)
@@ -1387,18 +2009,20 @@ class FolderViewPage(QWidget):
                     thumb_path = (create_default_thumbnail() or 
                                   "assets/images/manga_sample.png")
                 widget = ThumbnailWidget(
-                    thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox
+                    thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox,
+                    language=languages.get(item_name)
                 )
                 widget.clicked.connect(
                     functools.partial(self.on_item_clicked, item_path)
                 )
                 widget.alias_requested.connect(self.set_item_alias)
                 widget.remove_requested.connect(self.remove_item)
+                widget.language_requested.connect(self.set_item_language)
             if widget:
                 widgets.append(widget)
-        print(f"[DEBUG] Fichiers/dossiers supportés trouvés : {fichiers_supportes}")
+        debug(f"[DEBUG] {len(fichiers_supportes)} éléments supportés trouvés")
         if not widgets:
-            print("[DEBUG] Aucun fichier ou dossier supporté trouvé dans ce dossier.")
+            debug("[DEBUG] Aucun fichier ou dossier supporté trouvé dans ce dossier.")
         self.grid_view.set_items(widgets)
         # Mettre à jour l'icône du bouton après le refresh
         if self.selection_mode:
@@ -1411,6 +2035,7 @@ class FolderViewPage(QWidget):
         else:
             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
             self.select_btn.setToolTip("Sélectionner des fichiers")
+        self.select_btn.setChecked(self.selection_mode)
 
     def on_item_clicked(self, path):
         """Gère le clic sur un élément dans la vue de dossier."""
@@ -1443,6 +2068,11 @@ class FolderViewPage(QWidget):
         """Masque un fichier (ou dossier) de la vue pour la session courante uniquement."""
         base_name = os.path.basename(path)
         self.session_hidden_files.add(base_name)
+        self.refresh_view()
+
+    def set_item_language(self, path, code):
+        """Langue d'un élément du dossier, rangée à côté des alias."""
+        save_item_language(path, code)
         self.refresh_view()
 
     def set_item_alias(self, path, current_name):
@@ -1505,17 +2135,79 @@ class FolderViewPage(QWidget):
             self.selected_items.clear()
             self.selection_mode = False
             self.refresh_view()
-            print(f"[DEBUG] Fichiers/dossiers masqués : {self.session_hidden_files}")
+            debug(f"[DEBUG] Fichiers/dossiers masqués : {self.session_hidden_files}")
         else:
             self.selection_mode = not self.selection_mode
             if not self.selection_mode:
                 self.selected_items.clear()
             self.refresh_view()
-            print(f"[DEBUG] Mode sélection (vue dossier) : {self.selection_mode}")
+            debug(f"[DEBUG] Mode sélection (vue dossier) : {self.selection_mode}")
 
 # =====================================================================================
 # LECTEUR DE FICHIERS (PDF et CBZ)
 # =====================================================================================
+class PageView(QScrollArea):
+    """Zone de lecture : molette pour zoomer, clic gauche maintenu pour déplacer."""
+    zoom_requested = Signal(float, QPoint)   # facteur multiplicatif, point vise
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pan_anchor = None
+        self._pan_scroll = None
+        # Le clic ne doit pas voler le focus clavier à la page du lecteur.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for bar in (self.horizontalScrollBar(), self.verticalScrollBar()):
+            bar.rangeChanged.connect(lambda *_: self.update_cursor())
+        self.update_cursor()
+
+    def _scrollable(self):
+        return (self.horizontalScrollBar().maximum() > 0
+                or self.verticalScrollBar().maximum() > 0)
+
+    def update_cursor(self):
+        """Main ouverte seulement quand il y a de quoi se déplacer."""
+        if self._pan_anchor is not None:
+            return
+        self.viewport().setCursor(Qt.CursorShape.OpenHandCursor if self._scrollable()
+                                  else Qt.CursorShape.ArrowCursor)
+
+    def wheelEvent(self, event):
+        steps = event.angleDelta().y()
+        if not steps:
+            super().wheelEvent(event)
+            return
+        factor = VIEWER_ZOOM_STEP if steps > 0 else 1.0 / VIEWER_ZOOM_STEP
+        self.zoom_requested.emit(factor, event.position().toPoint())
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._scrollable():
+            self._pan_anchor = event.position().toPoint()
+            self._pan_scroll = QPoint(self.horizontalScrollBar().value(),
+                                      self.verticalScrollBar().value())
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._pan_anchor is None:
+            super().mouseMoveEvent(event)
+            return
+        moved = event.position().toPoint() - self._pan_anchor
+        self.horizontalScrollBar().setValue(self._pan_scroll.x() - moved.x())
+        self.verticalScrollBar().setValue(self._pan_scroll.y() - moved.y())
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._pan_anchor is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._pan_anchor = None
+            self.update_cursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class FileViewerPage(QWidget):
     back_clicked = Signal()
 
@@ -1526,10 +2218,16 @@ class FileViewerPage(QWidget):
         self.current_page = 0
         self.total_pages = 0
         self.zoom_factor = 1.0
+        # Tant qu'il est vrai, chaque page est ajustée à la hauteur de la fenêtre ;
+        # le premier zoom manuel le désactive et le facteur choisi est conservé.
+        self.zoom_is_auto = True
         self.file_path = None
         self.file_type = None  # 'pdf' ou 'cbz'
         self.cbz_images = []  # Liste des images pour les CBZ
         self.rar_file = None
+        # Sans politique de focus, le setFocus() de showEvent est sans effet et
+        # aucune touche n'arrive jusqu'à keyPressEvent.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setup_ui()
         
         # Timer pour recalculer le zoom une fois la fenêtre affichée
@@ -1573,11 +2271,19 @@ class FileViewerPage(QWidget):
         
         self.pdf_label = QLabel()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Le label couvre toute la zone : sans cela il intercepte le glisser.
+        self.pdf_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         
-        self.scroll_area = QScrollArea()
+        self.scroll_area = PageView()
         self.scroll_area.setWidget(self.pdf_label)
         self.scroll_area.setWidgetResizable(True)
-        
+        self.scroll_area.zoom_requested.connect(self.zoom_at)
+
+        # Boutons pilotés à la souris : ils ne doivent pas capter le clavier.
+        for button in (self.back_btn, self.prev_btn, self.next_btn,
+                       self.zoom_in_btn, self.zoom_out_btn):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         layout.addLayout(nav_layout)
         layout.addWidget(self.scroll_area)
 
@@ -1608,52 +2314,9 @@ class FileViewerPage(QWidget):
         return max(0.2, min(3.0, zoom_factor))
 
     def recalculate_zoom(self):
-        """Recalcule le zoom optimal une fois que la fenêtre est affichée"""
-        if self.doc and self.total_pages > 0 and self.file_type == 'pdf':
-            current_page = self.doc[self.current_page]
-            new_zoom = self.calculate_optimal_zoom(page=current_page)
-            if abs(new_zoom - self.zoom_factor) > 0.1:  # Seulement si le changement est significatif
-                self.zoom_factor = new_zoom
-                self.display_page(self.current_page)
-        elif self.zip_file and self.total_pages > 0 and self.file_type == 'cbz':
-            # Pour les CBZ/ZIP, charger la première image pour calculer le zoom
-            try:
-                image_name = self.cbz_images[self.current_page]
-                with self.zip_file.open(image_name) as image_file:
-                    image_data = image_file.read()
-                    qimage = QImage()
-                    if qimage.loadFromData(image_data):
-                        new_zoom = self.calculate_optimal_zoom(image=qimage)
-                        if abs(new_zoom - self.zoom_factor) > 0.1:  # Seulement si le changement est significatif
-                            self.zoom_factor = new_zoom
-                            self.display_page(self.current_page)
-            except Exception as e:
-                print(f"Erreur lors du calcul du zoom CBZ: {e}")
-        elif self.rar_file and self.total_pages > 0 and self.file_type == 'rar':
-            # Pour les RAR, charger la première image pour calculer le zoom
-            try:
-                image_name = self.cbz_images[self.current_page]
-                with self.rar_file.open(image_name) as image_file:
-                    image_data = image_file.read()
-                    qimage = QImage()
-                    if qimage.loadFromData(image_data):
-                        new_zoom = self.calculate_optimal_zoom(image=qimage)
-                        if abs(new_zoom - self.zoom_factor) > 0.1:  # Seulement si le changement est significatif
-                            self.zoom_factor = new_zoom
-                            self.display_page(self.current_page)
-            except Exception as e:
-                print(f"Erreur lors du calcul du zoom RAR: {e}")
-        elif self.file_type == 'image_folder' and self.total_pages > 0:
-            try:
-                image_path = self.cbz_images[self.current_page]
-                qimage = QImage(image_path)
-                if not qimage.isNull():
-                    new_zoom = self.calculate_optimal_zoom(image=qimage)
-                    if abs(new_zoom - self.zoom_factor) > 0.1:
-                        self.zoom_factor = new_zoom
-                        self.display_page(self.current_page)
-            except Exception as e:
-                print(f"Erreur lors du calcul du zoom pour le dossier d'images: {e}")
+        """Re-ajuste la page après un redimensionnement de la fenêtre."""
+        if self.total_pages > 0 and self.zoom_is_auto:
+            self.display_page(self.current_page)
 
     def load_file(self, path):
         try:
@@ -1699,8 +2362,8 @@ class FileViewerPage(QWidget):
                 self.doc = None
                 self.zip_file = None
                 self.rar_file = None
-            # Afficher d'abord avec un zoom par défaut
-            self.zoom_factor = 1.0
+            # Nouveau fichier : on repart sur l'ajustement automatique
+            self.zoom_is_auto = True
             self.display_page(0)
             # Programmer un recalcul du zoom après un court délai
             self.zoom_timer.start(100)  # 100ms de délai
@@ -1727,6 +2390,8 @@ class FileViewerPage(QWidget):
             if not (0 <= page_num < self.total_pages):
                 return
             page = self.doc[page_num]
+            if self.zoom_is_auto:
+                self.zoom_factor = self.calculate_optimal_zoom(page=page)
             mat = fitz.Matrix(self.zoom_factor, self.zoom_factor)
             pix = page.get_pixmap(matrix=mat)
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
@@ -1737,13 +2402,7 @@ class FileViewerPage(QWidget):
             image_path = self.cbz_images[page_num]
             qimage = QImage(image_path)
             if not qimage.isNull():
-                scaled_pixmap = QPixmap.fromImage(qimage).scaled(
-                    int(qimage.width() * self.zoom_factor),
-                    int(qimage.height() * self.zoom_factor),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.pdf_label.setPixmap(scaled_pixmap)
+                self.pdf_label.setPixmap(self.scaled_page(qimage))
             else:
                 self.pdf_label.setText(f"Impossible de charger l'image:\n{os.path.basename(image_path)}")
         elif self.file_type == 'cbz' and self.zip_file:
@@ -1754,14 +2413,7 @@ class FileViewerPage(QWidget):
                 image_data = image_file.read()
                 qimage = QImage()
                 if qimage.loadFromData(image_data):
-                    new_zoom = self.calculate_optimal_zoom(image=qimage)
-                    scaled_pixmap = QPixmap.fromImage(qimage).scaled(
-                        int(qimage.width() * new_zoom),
-                        int(qimage.height() * new_zoom),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-                    self.pdf_label.setPixmap(scaled_pixmap)
+                    self.pdf_label.setPixmap(self.scaled_page(qimage))
         elif self.file_type == 'rar' and hasattr(self, 'rar_file') and self.rar_file:
             if not (0 <= page_num < self.total_pages):
                 return
@@ -1770,17 +2422,39 @@ class FileViewerPage(QWidget):
                 image_data = image_file.read()
                 qimage = QImage()
                 if qimage.loadFromData(image_data):
-                    new_zoom = self.calculate_optimal_zoom(image=qimage)
-                    scaled_pixmap = QPixmap.fromImage(qimage).scaled(
-                        int(qimage.width() * new_zoom),
-                        int(qimage.height() * new_zoom),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-                    self.pdf_label.setPixmap(scaled_pixmap)
+                    self.pdf_label.setPixmap(self.scaled_page(qimage))
         self.page_label.setText(f"Page {self.current_page + 1} / {self.total_pages}")
         self.prev_btn.setEnabled(self.current_page > 0)
         self.next_btn.setEnabled(self.current_page < self.total_pages - 1)
+
+    def scaled_page(self, qimage):
+        """Image de page au zoom courant, ajustée à la fenêtre en mode automatique."""
+        if self.zoom_is_auto:
+            self.zoom_factor = self.calculate_optimal_zoom(image=qimage)
+        return QPixmap.fromImage(qimage).scaled(
+            max(1, int(qimage.width() * self.zoom_factor)),
+            max(1, int(qimage.height() * self.zoom_factor)),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+    def zoom_at(self, factor, anchor):
+        """Zoom multiplicatif gardant fixe le point de la page sous le curseur."""
+        previous = self.zoom_factor
+        self.zoom_factor = max(VIEWER_ZOOM_MIN, min(VIEWER_ZOOM_MAX, previous * factor))
+        if abs(self.zoom_factor - previous) < 1e-6:
+            return
+        self.zoom_is_auto = False
+        h = self.scroll_area.horizontalScrollBar()
+        v = self.scroll_area.verticalScrollBar()
+        target = QPoint(h.value() + anchor.x(), v.value() + anchor.y())
+        ratio = self.zoom_factor / previous
+        self.display_page(self.current_page)
+        # Les barres n'ont leur nouvelle plage qu'après la mise en page : on
+        # repositionne au tour de boucle suivant, sinon la valeur est écrêtée.
+        QTimer.singleShot(0, lambda: (
+            h.setValue(round(target.x() * ratio) - anchor.x()),
+            v.setValue(round(target.y() * ratio) - anchor.y())))
 
     def next_page(self):
         self.display_page(self.current_page + 1)
@@ -1789,21 +2463,23 @@ class FileViewerPage(QWidget):
         self.display_page(self.current_page - 1)
         
     def zoom_in(self):
-        self.zoom_factor = min(self.zoom_factor * 1.2, 5.0)
+        self.zoom_is_auto = False
+        self.zoom_factor = min(self.zoom_factor * 1.2, VIEWER_ZOOM_MAX)
         self.display_page(self.current_page)
         
     def zoom_out(self):
-        self.zoom_factor = max(self.zoom_factor / 1.2, 0.2)
+        self.zoom_is_auto = False
+        self.zoom_factor = max(self.zoom_factor / 1.2, VIEWER_ZOOM_MIN)
         self.display_page(self.current_page)
 
     def keyPressEvent(self, event):
         """Gestion des touches clavier pour la navigation"""
-        if event.key() == Qt.Key.Key_Left or event.key() == Qt.Key.Key_Up:
-            # Flèche gauche ou haut : page précédente
+        if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_PageUp):
+            # Flèche gauche/haut ou Page précédente : page précédente
             if self.current_page > 0:
                 self.previous_page()
-        elif event.key() == Qt.Key.Key_Right or event.key() == Qt.Key.Key_Down:
-            # Flèche droite ou bas : page suivante
+        elif event.key() in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
+            # Flèche droite/bas ou Page suivante : page suivante
             if self.current_page < self.total_pages - 1:
                 self.next_page()
         elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal:
@@ -1864,8 +2540,10 @@ class MangaChaptersPage(QWidget):
         
         # Header
         header_widget = RoundedHeaderWidget()
-        header_widget.setFixedHeight(80)
+        header_widget.radius = HEADER_RADIUS
+        header_widget.setFixedHeight(HEADER_HEIGHT)
         header_widget.set_background_image(resource_path('assets/images/header.png'))
+        header_widget.set_scrim()
 
         header = QHBoxLayout(header_widget)
         header.setContentsMargins(20, 20, 20, 20)
@@ -1878,8 +2556,7 @@ class MangaChaptersPage(QWidget):
         header.addStretch()
 
         # Bouton retour
-        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
-        header.addWidget(back_btn)
+        header.addWidget(make_back_btn(self.back_clicked.emit))
         header.addSpacing(20)
         
         layout.addWidget(header_widget)
@@ -1956,8 +2633,10 @@ class ChapterDownloadPage(QWidget):
         
         # Header
         header_widget = RoundedHeaderWidget()
-        header_widget.setFixedHeight(80)
+        header_widget.radius = HEADER_RADIUS
+        header_widget.setFixedHeight(HEADER_HEIGHT)
         header_widget.set_background_image(resource_path('assets/images/header.png'))
+        header_widget.set_scrim()
 
         header = QHBoxLayout(header_widget)
         header.setContentsMargins(20, 20, 20, 20)
@@ -1970,8 +2649,7 @@ class ChapterDownloadPage(QWidget):
         header.addStretch()
 
         # Bouton retour
-        back_btn = make_header_btn(resource_path("assets/icons/arrow-left-white.png"), "Retour", self.back_clicked.emit)
-        header.addWidget(back_btn)
+        header.addWidget(make_back_btn(self.back_clicked.emit))
         header.addSpacing(20)
         
         layout.addWidget(header_widget)
@@ -2114,44 +2792,41 @@ class MainWindow(QMainWindow):
         self.folder_view_page.file_selected.connect(self.show_pdf_viewer)
         self.folder_view_page.back_clicked.connect(self.show_bookshelf)
 
-        self.pdf_viewer_page.back_clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.folder_view_page))
+        self.pdf_viewer_page.back_clicked.connect(self.back_to_folder_view)
 
 
+
+    def _reset_selection(self):
+        """Sort les deux grilles du mode sélection, sans les reconstruire."""
+        for page in (self.folder_view_page, self.bookshelf_page):
+            page.selection_mode = False
+            page.selected_items.clear()
 
     def show_home(self):
-        self.folder_view_page.selection_mode = False
-        self.folder_view_page.selected_items.clear()
-        self.folder_view_page.refresh_view()
-        self.bookshelf_page.selection_mode = False
-        self.bookshelf_page.selected_items.clear()
-        self.bookshelf_page.refresh_shelf()
+        # Chaque page reconstruit sa grille quand on l'affiche : le faire ici
+        # revenait à recalculer les deux à chaque aller-retour.
+        self._reset_selection()
         self.stacked_widget.setCurrentWidget(self.home_page)
-    
+
     def show_bookshelf(self):
-        self.folder_view_page.selection_mode = False
-        self.folder_view_page.selected_items.clear()
-        self.folder_view_page.refresh_view()
-        self.bookshelf_page.selection_mode = False
-        self.bookshelf_page.selected_items.clear()
+        self._reset_selection()
         self.bookshelf_page.refresh_shelf()
         self.stacked_widget.setCurrentWidget(self.bookshelf_page)
 
     def show_folder_view(self, path):
-        print(f"[DEBUG] show_folder_view appelé avec path: {path}")
-        print(f"[DEBUG] Le dossier existe: {os.path.exists(path)}")
-        if os.path.exists(path):
-            print(f"[DEBUG] Contenu du dossier: {os.listdir(path)}")
+        debug(f"[DEBUG] show_folder_view: {path} (existe={os.path.exists(path)})")
         self.folder_view_page.set_folder(path, is_main_entry=True)
         self.stacked_widget.setCurrentWidget(self.folder_view_page)
 
     def show_pdf_viewer(self, path):
-        self.folder_view_page.selection_mode = False
-        self.folder_view_page.selected_items.clear()
-        self.folder_view_page.refresh_view()
+        self._reset_selection()
         self.pdf_viewer_page.load_file(path)
         self.stacked_widget.setCurrentWidget(self.pdf_viewer_page)
 
-
+    def back_to_folder_view(self):
+        """Retour du lecteur : la grille se remet à jour à ce moment-là."""
+        self.folder_view_page.refresh_view()
+        self.stacked_widget.setCurrentWidget(self.folder_view_page)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Ouvrir un fichier", "", "Fichiers supportés (*.pdf *.cbz *.zip *.rar);;PDF Files (*.pdf);;CBZ Files (*.cbz);;ZIP Files (*.zip);;RAR Files (*.rar)")
@@ -2163,149 +2838,36 @@ class MainWindow(QMainWindow):
         self.bookshelf_page.add_folder(folder)
 
 def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
-    """Génère toutes les vignettes PDF, CBZ, ZIP et RAR d'un dossier dans .thumbnails, avec callback de progression"""
+    """Génère toutes les vignettes PDF, CBZ, ZIP, RAR et CBR d'un dossier dans .thumbnails, avec callback de progression"""
     thumb_dir = os.path.join(folder_path, '.thumbnails')
     try:
         os.makedirs(thumb_dir, exist_ok=True)
     except OSError as e:
         print(f"Impossible de créer le dossier de vignettes : {thumb_dir}. Erreur : {e}")
         raise e
-    first_file_found = None
-    files = [f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS)]
+    index = load_thumb_cache_index(thumb_dir)
+    files = sorted(f for f in os.listdir(folder_path) if f.lower().endswith(ARCHIVE_EXTENSIONS))
     total = len(files)
     for idx, file in enumerate(files):
-        file_lower = file.lower()
         file_path = os.path.join(folder_path, file)
         if progress_callback:
             progress_callback(f"Chargement de l'image de la vignette : {file}", int((idx+1)/total*100))
         base = os.path.splitext(file)[0]
         thumb_path = os.path.join(thumb_dir, base + '.png')
-        anilist_thumb_path = os.path.join(thumb_dir, base + '_anilist.png')
-        if not os.path.exists(thumb_path) or os.path.getmtime(thumb_path) < os.path.getmtime(file_path):
-            try:
-                if file_lower.endswith('.pdf'):
-                    doc = fitz.open(file_path)
-                    if len(doc) > 0:
-                        page = doc[0]
-                        pix = page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2))
-                        pix.save(thumb_path)
-                        if first_file_found is None:
-                            first_file_found = file_path
-                    doc.close()
-                elif file_lower.endswith('.cbz') or file_lower.endswith('.zip'):
-                    with zipfile.ZipFile(file_path, 'r') as zip_file:
-                        image_files = [f for f in zip_file.namelist() 
-                                      if f.lower().endswith(IMAGE_EXTENSIONS)]
-                        if image_files:
-                            image_files.sort()
-                            first_image = image_files[0]
-                            with zip_file.open(first_image) as image_file:
-                                image_data = image_file.read()
-                                qimage = QImage()
-                                if qimage.loadFromData(image_data):
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(thumb_path)
-                                    if first_file_found is None:
-                                        first_file_found = file_path
-                elif file_lower.endswith('.rar'):
-                    with rarfile.RarFile(file_path, 'r') as rar:
-                        image_files = [f for f in rar.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
-                        if image_files:
-                            image_files.sort()
-                            first_image = image_files[0]
-                            with rar.open(first_image) as image_file:
-                                image_data = image_file.read()
-                                qimage = QImage()
-                                if qimage.loadFromData(image_data):
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(thumb_path)
-                                    if first_file_found is None:
-                                        first_file_found = file_path
-            except Exception as e:
-                print(f"Erreur vignette {file_path}: {e}")
-        # Récupération de la couverture depuis les APIs pour ce fichier
-        if not os.path.exists(anilist_thumb_path):
-            manga_name = os.path.splitext(file)[0]
-            info = fetch_manga_info(manga_name)
-            if info and info.get('cover'):
-                cover_url = info['cover']
-                try:
-                    resp = requests.get(cover_url, timeout=10)
-                    if resp.status_code == 200:
-                        with open(anilist_thumb_path, 'wb') as imgf:
-                            imgf.write(resp.content)
-                        print(f"[DEBUG API] Vignette téléchargée pour {file}: {anilist_thumb_path}")
-                    else:
-                        print(f"[DEBUG API] Erreur téléchargement vignette fichier {file}: {resp.status_code}")
-                except Exception as e:
-                    print(f"[DEBUG API] Exception téléchargement vignette fichier {file}: {e}")
+        if thumbnail_needs_render(thumb_path, file_path, index):
+            if write_cover_thumbnail(file_path, thumb_path):
+                index[base + '.png'] = THUMB_CACHE_VERSION
 
     # Générer la vignette du dossier à partir du premier fichier trouvé (archive, PDF ou image)
-    file_for_folder_thumb = None
-    
-    if files:
-        files.sort()
-        first_file_found = os.path.join(folder_path, files[0])
-    
-    if first_file_found:
-        file_for_folder_thumb = first_file_found
-    else:
-        # Si aucune archive/PDF n'est trouvé, chercher des images
-        image_files = sorted([
-            f for f in os.listdir(folder_path)
-            if f.lower().endswith(IMAGE_EXTENSIONS)
-        ])
-        if image_files:
-            file_for_folder_thumb = os.path.join(folder_path, image_files[0])
+    file_for_folder_thumb = folder_cover_source(folder_path)
 
     if file_for_folder_thumb:
         folder_thumb_path = os.path.join(thumb_dir, '_folder_thumb.png')
-        if not os.path.exists(folder_thumb_path) or os.path.getmtime(folder_thumb_path) < os.path.getmtime(file_for_folder_thumb):
-            try:
-                if file_for_folder_thumb.lower().endswith('.pdf'):
-                    doc = fitz.open(file_for_folder_thumb)
-                    if len(doc) > 0:
-                        page = doc[0]
-                        pix = page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2))
-                        pix.save(folder_thumb_path)
-                    doc.close()
-                elif file_for_folder_thumb.lower().endswith(('.cbz', '.zip')):
-                    with zipfile.ZipFile(file_for_folder_thumb, 'r') as zip_file:
-                        image_files = [f for f in zip_file.namelist() 
-                                      if f.lower().endswith(IMAGE_EXTENSIONS)]
-                        if image_files:
-                            image_files.sort()
-                            first_image = image_files[0]
-                            with zip_file.open(first_image) as image_file:
-                                image_data = image_file.read()
-                                qimage = QImage()
-                                if qimage.loadFromData(image_data):
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(folder_thumb_path)
-                elif file_for_folder_thumb.lower().endswith('.rar'):
-                    with rarfile.RarFile(file_for_folder_thumb, 'r') as rar:
-                        image_files = [f for f in rar.namelist() if f.lower().endswith(IMAGE_EXTENSIONS)]
-                        if image_files:
-                            image_files.sort()
-                            first_image = image_files[0]
-                            with rar.open(first_image) as image_file:
-                                image_data = image_file.read()
-                                qimage = QImage()
-                                if qimage.loadFromData(image_data):
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(folder_thumb_path)
-                elif file_for_folder_thumb.lower().endswith(IMAGE_EXTENSIONS):
-                    qimage = QImage(file_for_folder_thumb)
-                    if not qimage.isNull():
-                                    pixmap = QPixmap.fromImage(qimage)
-                                    scaled_pixmap = pixmap.scaled(400, 560, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    scaled_pixmap.save(folder_thumb_path)
-            except Exception as e:
-                print(f"Erreur vignette dossier {folder_path}: {e}")
+        if thumbnail_needs_render(folder_thumb_path, file_for_folder_thumb, index):
+            if write_cover_thumbnail(file_for_folder_thumb, folder_thumb_path):
+                index['_folder_thumb.png'] = THUMB_CACHE_VERSION
+
+    save_thumb_cache_index(thumb_dir, index)
 
 def create_default_thumbnail():
     """Crée une image par défaut programmatiquement"""
@@ -2336,25 +2898,25 @@ def get_thumbnail_path(file_path=None, folder_path=None):
         if folder_path:
             thumb_dir = os.path.join(folder_path, '.thumbnails')
             thumb_path = os.path.join(thumb_dir, '_folder_thumb.png')
-            print(f"[DEBUG] Test vignette dossier: {thumb_path}")
+            debug(f"[DEBUG] Test vignette dossier: {thumb_path}")
             if os.path.exists(thumb_path):
-                print(f"[DEBUG] Vignette trouvée: {thumb_path}")
+                debug(f"[DEBUG] Vignette trouvée: {thumb_path}")
                 return thumb_path
-            print(f"[DEBUG] Vignette non trouvée: {thumb_path}")
+            debug(f"[DEBUG] Vignette non trouvée: {thumb_path}")
             return None
         else:
             base = os.path.splitext(os.path.basename(file_path))[0]
             thumb_dir = os.path.join(os.path.dirname(file_path), '.thumbnails')
             thumb_path = os.path.join(thumb_dir, base + '.png')
-            print(f"[DEBUG] Test vignette fichier: {thumb_path}")
+            debug(f"[DEBUG] Test vignette fichier: {thumb_path}")
             if os.path.exists(thumb_path):
-                print(f"[DEBUG] Vignette locale trouvée: {thumb_path}")
+                debug(f"[DEBUG] Vignette locale trouvée: {thumb_path}")
                 return thumb_path
             folder_thumb = os.path.join(thumb_dir, '_folder_thumb.png')
             if os.path.exists(folder_thumb):
-                print(f"[DEBUG] Vignette dossier trouvée: {folder_thumb}")
+                debug(f"[DEBUG] Vignette dossier trouvée: {folder_thumb}")
                 return folder_thumb
-            print(f"[DEBUG] Aucune vignette trouvée pour {file_path}")
+            debug(f"[DEBUG] Aucune vignette trouvée pour {file_path}")
             return None
     except Exception as e:
         print(f"Erreur get_thumbnail_path: {e}")
@@ -2392,7 +2954,8 @@ def fetch_anilist_info(manga_title):
     '''
     variables = {'search': manga_title}
     try:
-        response = requests.post(url, json={'query': query, 'variables': variables})
+        response = requests.post(url, json={'query': query, 'variables': variables},
+                                 timeout=10)
         if response.status_code == 200:
             data = response.json()
             media = data.get('data', {}).get('Media')
@@ -2400,6 +2963,8 @@ def fetch_anilist_info(manga_title):
                 return {
                     'title': media['title'],
                     'description': media['description'],
+                    # AniList n'écrit qu'en anglais.
+                    'descriptions': {'en': media['description'] or ''},
                     'tags': [tag['name'] for tag in media['tags']],
                     'genres': media['genres'],
                     'cover': media['coverImage']['large'],
@@ -2422,8 +2987,17 @@ def fetch_mangadex_info(manga_title):
         if response.status_code == 200:
             data = response.json()
             if data.get('data'):
-                # Prendre le premier résultat
-                manga = data['data'][0]
+                # Préférer un titre identique à la recherche : sur des noms
+                # courants, le premier résultat est souvent un doujinshi.
+                def titles_of(entry):
+                    attrs = entry.get('attributes', {})
+                    values = list((attrs.get('title') or {}).values())
+                    for alt in attrs.get('altTitles') or []:
+                        values.extend(alt.values())
+                    return [v.strip().lower() for v in values if isinstance(v, str)]
+
+                wanted = manga_title.strip().lower()
+                manga = next((e for e in data['data'] if wanted in titles_of(e)), data['data'][0])
                 manga_id = manga['id']
                 
                 # Récupérer les détails complets du manga
@@ -2445,14 +3019,14 @@ def fetch_mangadex_info(manga_title):
                                 try:
                                     cover_response = requests.head(cover_url, timeout=5)
                                     if cover_response.status_code != 200:
-                                        print(f"[DEBUG MangaDex] URL couverture invalide: {cover_url}")
+                                        debug(f"[DEBUG MangaDex] URL couverture invalide: {cover_url}")
                                         cover_url = None
                                         continue
                                     else:
-                                        print(f"[DEBUG MangaDex] URL couverture valide: {cover_url}")
+                                        debug(f"[DEBUG MangaDex] URL couverture valide: {cover_url}")
                                         break
                                 except Exception as e:
-                                    print(f"[DEBUG MangaDex] Erreur vérification couverture: {e}")
+                                    debug(f"[DEBUG MangaDex] Erreur vérification couverture: {e}")
                                     cover_url = None
                                     continue
                     
@@ -2463,9 +3037,14 @@ def fetch_mangadex_info(manga_title):
                         if 'tags' in attrs:
                             tags = [tag['attributes']['name']['en'] for tag in attrs['tags']]
                     
+                    # MangaDex publie un synopsis par langue : on les garde tous.
+                    descriptions = manga_detail['attributes'].get('description') or {}
+                    if not isinstance(descriptions, dict):
+                        descriptions = {}
                     return {
                         'title': manga_detail['attributes']['title'].get('en', manga_title),
-                        'description': manga_detail['attributes'].get('description', {}).get('en', ''),
+                        'description': descriptions.get('en', ''),
+                        'descriptions': descriptions,
                         'tags': tags,
                         'genres': tags,  # MangaDex utilise des tags pour les genres
                         'cover': cover_url,
@@ -2475,25 +3054,93 @@ def fetch_mangadex_info(manga_title):
         print(f"Erreur MangaDex: {e}")
     return None
 
-def fetch_manga_info(manga_title):
-    """Recherche les informations d'un manga sur AniList puis MangaDex si pas trouvé"""
-    # Essayer d'abord AniList
-    info = fetch_anilist_info(manga_title)
-    if info and info.get('cover'):
-        print(f"[DEBUG] Couverture trouvée sur AniList pour : {manga_title}")
-        return info
-    
-    # Si pas trouvé sur AniList, essayer MangaDex
-    print(f"[DEBUG] Pas trouvé sur AniList, essai MangaDex pour : {manga_title}")
-    info = fetch_mangadex_info(manga_title)
-    if info and info.get('cover'):
-        print(f"[DEBUG] Couverture trouvée sur MangaDex pour : {manga_title}")
-        return info
-    
-    print(f"[DEBUG] Aucune couverture trouvée pour : {manga_title}")
-    return None
+def description_candidates(language):
+    """Codes à essayer pour un synopsis, du plus précis au repli anglais."""
+    if not language:
+        return ("en",)
+    if language == "es":
+        # MangaDex publie souvent l'espagnol sous « es-la » (Amérique latine).
+        return ("es", "es-la", "en")
+    return (language, "en")
+
+
+def pick_description(info, language):
+    """Synopsis dans la langue demandée, sinon anglais, sinon n'importe laquelle."""
+    descriptions = info.get('descriptions')
+    if not isinstance(descriptions, dict) or not descriptions:
+        descriptions = {'en': info.get('description') or ''}
+    for code in description_candidates(language):
+        if descriptions.get(code):
+            return descriptions[code]
+    return next((text for text in descriptions.values() if text), '')
+
+
+def fetch_manga_info(manga_title, language=None):
+    """Fiche d'un manga : AniList d'abord, MangaDex ensuite.
+
+    MangaDex est aussi interrogé dès qu'une langue autre que l'anglais est
+    demandée : c'est la seule des deux sources à fournir des synopsis traduits.
+    """
+    anilist = fetch_anilist_info(manga_title)
+    needs_translation = bool(language) and language not in ("en",)
+    mangadex = None
+    if needs_translation or not (anilist and anilist.get('cover')):
+        mangadex = fetch_mangadex_info(manga_title)
+    if not anilist and not mangadex:
+        debug(f"[DEBUG] Aucune fiche trouvée pour : {manga_title}")
+        return None
+
+    info = dict(anilist or mangadex)
+    descriptions = {}
+    for source in (mangadex, anilist):   # AniList prime sur la version anglaise
+        if source:
+            descriptions.update({k: v for k, v in (source.get('descriptions') or {}).items() if v})
+    info['descriptions'] = descriptions
+    if not info.get('cover') and mangadex:
+        info['cover'] = mangadex.get('cover')
+    return info
+
+
+def refresh_manga_info(folder_path, title, language=None):
+    """Ré-interroge les APIs pour ce dossier et met à jour son .anilist.json.
+
+    Les synopsis déjà connus dans d'autres langues sont conservés : changer de
+    langue n'efface pas ce qui a été récupéré auparavant.
+    """
+    info = fetch_manga_info(title, language=language)
+    if not info:
+        return None
+    path = os.path.join(folder_path, '.anilist.json')
+    known = {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            previous = json.load(f)
+        if isinstance(previous, dict) and isinstance(previous.get('descriptions'), dict):
+            known = previous['descriptions']
+    except (OSError, ValueError):
+        pass
+    merged = dict(known)
+    merged.update(info.get('descriptions') or {})
+    info['descriptions'] = merged
+    info['title_query'] = title
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"Erreur écriture .anilist.json : {e}")
+    return info
+
 
 def main():
+    # Certains chemins de la bibliothèque sortent du codepage de la console
+    # (arabe, japonais) : sans cela, un simple print fait planter l'application.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+    # Mise à l'échelle fractionnaire : les vignettes sont rendues aux pixels
+    # physiques de l'écran plutôt qu'à un facteur arrondi.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     # Régénérer toutes les vignettes au démarrage (désactivé pour accélérer le lancement)
