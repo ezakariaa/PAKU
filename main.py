@@ -14,7 +14,9 @@ DEBUG = os.environ.get("PAKU_DEBUG", "").strip().lower() in ("1", "true", "yes",
 
 
 def debug(message):
-    if DEBUG:
+    # La variable d'environnement force les traces ; le réglage « Traces de
+    # débogage » permet de les allumer sans relancer l'application.
+    if DEBUG or settings.get("debug_traces"):
         print(message)
 
 
@@ -42,18 +44,26 @@ from PySide6.QtSvg import QSvgRenderer
 # Importer les styles
 from styles.styles import (
     HOME_PRIMARY_BUTTON_STYLE, HOME_SECONDARY_BUTTON_STYLE, HOME_SUBTITLE_STYLE,
+    HOME_ICON_BUTTON_STYLE,
     BMC_BUTTON_STYLE, PAYPAL_BUTTON_STYLE, HOME_SUPPORT_HEIGHT, THUMBNAIL_IMAGE_STYLE,
     THUMBNAIL_IMAGE_HOVER_STYLE, THUMBNAIL_MENU_BUTTON_STYLE,
-    SCROLL_AREA_STYLE, BACK_BUTTON_STYLE,
+    SCROLL_AREA_STYLE,
     PAGE_TITLE_STYLE, FOLDER_PATH_STYLE,
     PAGE_TITLE_STYLE_BOOKSHELF, HEADER_SUBTITLE_STYLE, HEADER_TOOLBAR_STYLE,
     HEADER_ICON_BUTTON_STYLE, HEADER_BACK_BUTTON_STYLE, HEADER_SEARCH_STYLE,
     HEADER_PRIMARY_BUTTON_STYLE,
     PROGRESS_CARD_STYLE, PROGRESS_TITLE_STYLE, PROGRESS_PERCENT_STYLE,
-    PROGRESS_MESSAGE_STYLE, PROGRESS_BAR_STYLE
+    PROGRESS_MESSAGE_STYLE, PROGRESS_BAR_STYLE,
+    READER_BAR_HEIGHT, READER_BTN_SIZE, READER_GROUP_HEIGHT,
+    READER_BAR_STYLE, READER_GROUP_STYLE, READER_ICON_BUTTON_STYLE,
+    READER_BACK_BUTTON_STYLE, READER_PAGE_LABEL_STYLE, READER_ZOOM_LABEL_STYLE,
+    READER_VIEW_STYLE
 )
 
 from ui.flowlayout import FlowLayout
+# Réglages système : lus partout, écrits par la fenêtre de paramètres.
+from app_settings import settings
+from ui.settings_window import SettingsWindow
 
 LIBRARY_FILE = "library.json"
 GENERATE_THUMBNAILS = True
@@ -66,8 +76,16 @@ os.environ["QT_STYLE_OVERRIDE"] = ""
 # =====================================================================================
 # PIPELINE DE VIGNETTES HAUTE QUALITÉ
 # =====================================================================================
-# Taille logique d'une pochette dans la grille.
+# Taille logique d'une pochette dans la grille. C'est la valeur de référence du
+# cache ; l'affichage, lui, suit le réglage « Taille des vignettes ».
 THUMB_DISPLAY_SIZE = (200, 280)
+
+
+def thumb_display_size():
+    """Taille d'affichage courante d'une pochette, réglage compris."""
+    return settings.thumbnail_pixel_size()
+
+
 # Épaisseur et rayon intérieur de la bordure : doivent rester synchronisés avec
 # THUMBNAIL_IMAGE_STYLE dans styles/styles.py (border: 4px, border-radius: 14px).
 THUMB_BORDER_WIDTH = 4
@@ -115,7 +133,7 @@ HEADER_SCRIM = ((17, 20, 27, 214), (17, 20, 27, 168))
 # --- Lecteur ---
 VIEWER_ZOOM_MIN = 0.2
 VIEWER_ZOOM_MAX = 5.0
-VIEWER_ZOOM_STEP = 1.15   # un cran de molette
+# Le pas d'un cran de molette est reglable : voir app_settings.wheel_zoom_factor().
 
 
 def smooth_resize(image, target_w, target_h, expanding=False):
@@ -490,6 +508,7 @@ class RoundedHeaderWidget(QWidget):
 class HomePage(QWidget):
     open_bookshelf = Signal()
     open_file_dialog = Signal()
+    open_settings = Signal()
     def __init__(self):
         super().__init__()
         self.setup_ui()
@@ -522,6 +541,19 @@ class HomePage(QWidget):
         bookshelf_btn.setStyleSheet(HOME_PRIMARY_BUTTON_STYLE)
         bookshelf_btn.clicked.connect(self.open_bookshelf.emit)
         btn_layout1.addWidget(bookshelf_btn)
+
+        # Engrenage : voisin de la bibliothèque, mais sans nom ni couleur pleine
+        # pour rester une porte de service à côté des deux entrées principales.
+        settings_btn = QPushButton()
+        settings_btn.setIcon(QIcon(resource_path("assets/icons/gear.svg")))
+        settings_btn.setIconSize(QSize(22, 22))
+        settings_btn.setFixedSize(HOME_BUTTON_HEIGHT, HOME_BUTTON_HEIGHT)
+        settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn.setStyleSheet(HOME_ICON_BUTTON_STYLE)
+        settings_btn.setToolTip("Paramètres")
+        settings_btn.clicked.connect(self.open_settings.emit)
+        btn_layout1.addWidget(settings_btn)
+
         layout.addLayout(btn_layout1)
 
         bmc_btn = QPushButton('☕ Buy me a coffee')
@@ -554,16 +586,19 @@ class ThumbnailWidget(QWidget):
     tags_requested = Signal(str)
     language_requested = Signal(str, str)   # chemin, code de langue ("" pour aucune)
 
-    def __init__(self, thumb_path, title_text, path=None, width=THUMB_DISPLAY_SIZE[0],
-                 height=THUMB_DISPLAY_SIZE[1], show_menu=True, checkbox=None,
+    def __init__(self, thumb_path, title_text, path=None, width=None,
+                 height=None, show_menu=True, checkbox=None,
                  language=None):
         super().__init__()
         self.thumb_path = thumb_path
         self._rendered_ratio = None
         self.title_text = title_text
         self.path = path
-        self.thumb_width = width
-        self.thumb_height = height
+        # Taille resolue a la construction : une valeur par defaut figee dans la
+        # signature ignorerait le reglage change en cours de session.
+        default_width, default_height = thumb_display_size()
+        self.thumb_width = width if width is not None else default_width
+        self.thumb_height = height if height is not None else default_height
         self.show_menu = show_menu
         self.checkbox = checkbox
         self.language = language
@@ -1024,7 +1059,7 @@ class ResponsiveGridView(QWidget):
 
     def column_count(self):
         width = self.width()
-        return max(1, width // (THUMB_DISPLAY_SIZE[0] + 20)) if width > 0 else 1
+        return max(1, width // (thumb_display_size()[0] + 20)) if width > 0 else 1
 
     def set_items(self, widgets):
         # Nettoyer les anciens widgets
@@ -1271,6 +1306,9 @@ class BookShelfPage(QWidget):
         self.sort_btn = make_toolbar_btn(resource_path("assets/icons/sort-alpha-down-white.svg"),
                                          "Trier A-Z", self.toggle_sort)
         filter_bar.addWidget(self.sort_btn)
+        # Ordre d'ouverture choisi dans les paramètres. La bibliothèque n'est pas
+        # réécrite au passage : seul un tri demandé à la main est enregistré.
+        self.apply_sort(settings.get("default_sort") == "az", save=False)
 
         header.addWidget(toolbar)
 
@@ -1307,12 +1345,18 @@ class BookShelfPage(QWidget):
             def progress_callback(msg, value=None):
                 progress_dialog.update_message(msg, value)
             try:
-                generate_all_thumbnails_for_folder(folder_path, progress_callback)
+                # Vignettes préparées d'un bloc, sauf si le réglage préfère les
+                # laisser se créer à l'affichage.
+                if settings.get("auto_thumbnails"):
+                    generate_all_thumbnails_for_folder(folder_path, progress_callback)
                 self.library.append({"path": folder_path})
                 self.save_library()
                 self.refresh_shelf()
                 # --- Récupération automatique AniList/MangaDex ---
                 manga_name = os.path.basename(folder_path)
+                if not settings.get("fetch_online_info"):
+                    debug("[DEBUG API] Récupération en ligne désactivée dans les paramètres")
+                    return
                 debug(f"[DEBUG API] Tentative de récupération pour : {manga_name}")
                 info = fetch_manga_info(manga_name)
                 if info:
@@ -1555,17 +1599,19 @@ class BookShelfPage(QWidget):
                     debug(f"[DEBUG] Attention : .anilist.json absent dans {folder_path} après changement d'alias.")
                 self.refresh_shelf()
 
+    def apply_sort(self, az, save=True):
+        """Trie la bibliothèque et prépare le bouton pour l'ordre inverse."""
+        self.library.sort(key=lambda d: d.get("alias", os.path.basename(d["path"])).lower(),
+                          reverse=not az)
+        icon = "sort-alpha-up-white.svg" if az else "sort-alpha-down-white.svg"
+        self.sort_btn.setIcon(QIcon(resource_path(f"assets/icons/{icon}")))
+        self.sort_btn.setToolTip("Trier Z-A" if az else "Trier A-Z")
+        self.sort_az = not az
+        if save:
+            self.save_library()
+
     def toggle_sort(self):
-        if self.sort_az:
-            self.library.sort(key=lambda d: d.get("alias", os.path.basename(d["path"])).lower())
-            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-up-white.svg"))
-            self.sort_btn.setToolTip("Trier Z-A")
-        else:
-            self.library.sort(key=lambda d: d.get("alias", os.path.basename(d["path"])).lower(), reverse=True)
-            self.sort_btn.setIcon(QIcon("assets/icons/sort-alpha-down-white.svg"))
-            self.sort_btn.setToolTip("Trier A-Z")
-        self.sort_az = not self.sort_az
-        self.save_library()
+        self.apply_sort(self.sort_az)
         self.refresh_shelf()
 
     def toggle_selection_mode(self):
@@ -1960,7 +2006,14 @@ class FolderViewPage(QWidget):
                 continue
             item_path = os.path.join(self.folder_path, item_name)
             widget = None
-            display_name = alias_map.get(item_name, item_name)
+            display_name = alias_map.get(item_name)
+            if display_name is None:
+                display_name = item_name
+                # Un alias reste affiché tel quel : c'est un nom voulu, pas un
+                # nom de fichier.
+                if (settings.get("hide_extensions")
+                        and item_name.lower().endswith(ARCHIVE_EXTENSIONS)):
+                    display_name = os.path.splitext(item_name)[0]
             # Ajout case à cocher si mode sélection
             if self.selection_mode:
                 from PySide6.QtWidgets import QCheckBox
@@ -2154,6 +2207,10 @@ class PageView(QScrollArea):
         super().__init__(parent)
         self._pan_anchor = None
         self._pan_scroll = None
+        # La bordure vient de la feuille de style : elle remplace le cadre par
+        # defaut, qui detonnait avec les coins arrondis de la barre.
+        self.setObjectName("readerView")
+        self.setStyleSheet(READER_VIEW_STYLE)
         # Le clic ne doit pas voler le focus clavier à la page du lecteur.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         for bar in (self.horizontalScrollBar(), self.verticalScrollBar()):
@@ -2176,7 +2233,10 @@ class PageView(QScrollArea):
         if not steps:
             super().wheelEvent(event)
             return
-        factor = VIEWER_ZOOM_STEP if steps > 0 else 1.0 / VIEWER_ZOOM_STEP
+        if settings.get("invert_wheel"):
+            steps = -steps
+        step = settings.wheel_zoom_factor()
+        factor = step if steps > 0 else 1.0 / step
         self.zoom_requested.emit(factor, event.position().toPoint())
         event.accept()
 
@@ -2208,6 +2268,33 @@ class PageView(QScrollArea):
         super().mouseReleaseEvent(event)
 
 
+def make_reader_btn(icon_name, tooltip, callback):
+    """Bouton icône de la barre du lecteur : plat, l'accent ne sort qu'au survol."""
+    btn = QPushButton()
+    btn.setIcon(QIcon(resource_path(f"assets/icons/{icon_name}.svg")))
+    btn.setIconSize(QSize(17, 17))
+    btn.setFixedSize(READER_BTN_SIZE, READER_BTN_SIZE)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(READER_ICON_BUTTON_STYLE)
+    btn.setToolTip(tooltip)
+    btn.clicked.connect(callback)
+    return btn
+
+
+def make_reader_group(*widgets):
+    """Pilule claire qui réunit une famille d'actions du lecteur."""
+    group = QWidget()
+    group.setObjectName("readerGroup")
+    group.setStyleSheet(READER_GROUP_STYLE)
+    group.setFixedHeight(READER_GROUP_HEIGHT)
+    row = QHBoxLayout(group)
+    row.setContentsMargins(4, 0, 4, 0)
+    row.setSpacing(2)
+    for widget in widgets:
+        row.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+    return group
+
+
 class FileViewerPage(QWidget):
     back_clicked = Signal()
 
@@ -2237,38 +2324,59 @@ class FileViewerPage(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        nav_layout = QHBoxLayout()
-        
-        # Boutons de navigation
-        self.back_btn = QPushButton("←")
-        self.back_btn.setToolTip("Retour à la vue précédente")
-        self.back_btn.setStyleSheet(BACK_BUTTON_STYLE)
-        self.back_btn.clicked.connect(self.back_clicked.emit)
-        
-        self.prev_btn = QPushButton("◀ Précédent")
-        self.prev_btn.clicked.connect(self.previous_page)
-        
-        self.next_btn = QPushButton("Suivant ▶")
-        self.next_btn.clicked.connect(self.next_page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
 
-        self.page_label = QLabel("Page 0 / 0")
-        
-        self.zoom_in_btn = QPushButton("🔍+")
-        self.zoom_in_btn.clicked.connect(self.zoom_in)
-        
-        self.zoom_out_btn = QPushButton("🔍-")
-        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        # Barre du lecteur : retour à gauche, navigation au centre, zoom à
+        # droite. Les raccourcis clavier sont rappelés dans les infobulles :
+        # c'est le seul endroit où on peut les apprendre.
+        bar = QWidget()
+        bar.setObjectName("readerBar")
+        bar.setStyleSheet(READER_BAR_STYLE)
+        bar.setFixedHeight(READER_BAR_HEIGHT)
+        nav_layout = QHBoxLayout(bar)
+        nav_layout.setContentsMargins(10, 0, 10, 0)
+        nav_layout.setSpacing(10)
 
-        # Ajout au layout de navigation
+        self.back_btn = make_reader_btn("arrow-left", "Retour (Échap)",
+                                        self.back_clicked.emit)
+        self.back_btn.setFixedSize(READER_GROUP_HEIGHT, READER_GROUP_HEIGHT)
+        self.back_btn.setStyleSheet(READER_BACK_BUTTON_STYLE)
+        self.back_btn.setIconSize(QSize(19, 19))
+
+        self.prev_btn = make_reader_btn("chevron-left", "Page précédente (←)",
+                                        self.previous_page)
+        self.next_btn = make_reader_btn("chevron-right", "Page suivante (→)",
+                                        self.next_page)
+        self.page_label = QLabel()
+        self.page_label.setStyleSheet(READER_PAGE_LABEL_STYLE)
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Largeur figée sur le pire des cas : sans cela la pilule se dilaterait
+        # au passage de 9 à 10, puis de 99 à 100.
+        self.page_label.setMinimumWidth(96)
+
+        self.zoom_out_btn = make_reader_btn("zoom-out", "Zoom arrière (-)", self.zoom_out)
+        self.zoom_in_btn = make_reader_btn("zoom-in", "Zoom avant (+)", self.zoom_in)
+        # Le niveau de zoom est aussi le bouton qui rend la page à la fenêtre :
+        # une fois zoomé à la main, plus rien ne ramenait à l'ajustement.
+        self.zoom_label = QPushButton()
+        self.zoom_label.setFixedHeight(30)
+        self.zoom_label.setMinimumWidth(58)
+        self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.zoom_label.setStyleSheet(READER_ZOOM_LABEL_STYLE)
+        self.zoom_label.setToolTip("Ajuster la page à la fenêtre")
+        self.zoom_label.clicked.connect(self.fit_to_window)
+
         nav_layout.addWidget(self.back_btn)
         nav_layout.addStretch()
-        nav_layout.addWidget(self.prev_btn)
-        nav_layout.addWidget(self.page_label)
-        nav_layout.addWidget(self.next_btn)
+        nav_layout.addWidget(make_reader_group(self.prev_btn, self.page_label,
+                                               self.next_btn))
         nav_layout.addStretch()
-        nav_layout.addWidget(self.zoom_out_btn)
-        nav_layout.addWidget(self.zoom_in_btn)
-        
+        nav_layout.addWidget(make_reader_group(self.zoom_out_btn, self.zoom_label,
+                                               self.zoom_in_btn))
+
+        self.update_page_label()
+
         self.pdf_label = QLabel()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Le label couvre toute la zone : sans cela il intercepte le glisser.
@@ -2281,10 +2389,10 @@ class FileViewerPage(QWidget):
 
         # Boutons pilotés à la souris : ils ne doivent pas capter le clavier.
         for button in (self.back_btn, self.prev_btn, self.next_btn,
-                       self.zoom_in_btn, self.zoom_out_btn):
+                       self.zoom_in_btn, self.zoom_out_btn, self.zoom_label):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        layout.addLayout(nav_layout)
+        layout.addWidget(bar)
         layout.addWidget(self.scroll_area)
 
     def calculate_optimal_zoom(self, page=None, image=None):
@@ -2423,9 +2531,28 @@ class FileViewerPage(QWidget):
                 qimage = QImage()
                 if qimage.loadFromData(image_data):
                     self.pdf_label.setPixmap(self.scaled_page(qimage))
-        self.page_label.setText(f"Page {self.current_page + 1} / {self.total_pages}")
+        self.update_page_label()
+
+    def update_page_label(self):
+        """Compteur, niveau de zoom et boutons de bout de course."""
+        if self.total_pages:
+            page, total = f"{self.current_page + 1}", f"{self.total_pages}"
+        else:
+            page, total = "-", "-"
+        # La page courante ressort, le total reste en retrait : c'est le premier
+        # chiffre que l'oeil vient chercher.
+        self.page_label.setText(
+            f'<span style="font-weight:bold;">{page}</span>'
+            f'<span style="color:#8b94a3;"> / {total}</span>')
+        self.zoom_label.setText(f"{round(self.zoom_factor * 100)} %")
         self.prev_btn.setEnabled(self.current_page > 0)
         self.next_btn.setEnabled(self.current_page < self.total_pages - 1)
+
+    def fit_to_window(self):
+        """Rend la main à l'ajustement automatique, après un zoom manuel."""
+        if self.total_pages:
+            self.zoom_is_auto = True
+            self.display_page(self.current_page)
 
     def scaled_page(self, qimage):
         """Image de page au zoom courant, ajustée à la fenêtre en mode automatique."""
@@ -2456,11 +2583,21 @@ class FileViewerPage(QWidget):
             h.setValue(round(target.x() * ratio) - anchor.x()),
             v.setValue(round(target.y() * ratio) - anchor.y())))
 
+    def go_to_page(self, page_num):
+        """Changement de page demande par l'utilisateur.
+
+        Le reglage « Conserver le zoom » decide si l'on repart de l'ajustement
+        automatique ou si l'on garde le facteur choisi a la main.
+        """
+        if not settings.get("keep_zoom_between_pages"):
+            self.zoom_is_auto = True
+        self.display_page(page_num)
+
     def next_page(self):
-        self.display_page(self.current_page + 1)
-        
+        self.go_to_page(self.current_page + 1)
+
     def previous_page(self):
-        self.display_page(self.current_page - 1)
+        self.go_to_page(self.current_page - 1)
         
     def zoom_in(self):
         self.zoom_is_auto = False
@@ -2490,10 +2627,10 @@ class FileViewerPage(QWidget):
             self.zoom_out()
         elif event.key() == Qt.Key.Key_Home:
             # Touche Home : première page
-            self.display_page(0)
+            self.go_to_page(0)
         elif event.key() == Qt.Key.Key_End:
             # Touche End : dernière page
-            self.display_page(self.total_pages - 1)
+            self.go_to_page(self.total_pages - 1)
         elif event.key() == Qt.Key.Key_Escape:
             # Touche Échap : retour
             self.back_clicked.emit()
@@ -2778,12 +2915,19 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.folder_view_page)
         self.stacked_widget.addWidget(self.pdf_viewer_page)
 
+        self.settings_window = None
+
         self.connect_signals()
-        self.show_home()
+        # Page d'ouverture choisie dans les paramètres.
+        if settings.get("startup_page") == "bookshelf":
+            self.show_bookshelf()
+        else:
+            self.show_home()
 
     def connect_signals(self):
         self.home_page.open_bookshelf.connect(self.show_bookshelf)
         self.home_page.open_file_dialog.connect(self.open_file)
+        self.home_page.open_settings.connect(self.show_settings)
 
         self.bookshelf_page.folder_selected.connect(self.show_folder_view)
         self.bookshelf_page.add_folder_clicked.connect(self.open_directory)
@@ -2836,6 +2980,38 @@ class MainWindow(QMainWindow):
     def open_directory(self):
         folder = QFileDialog.getExistingDirectory(self, "Choisir un dossier")
         self.bookshelf_page.add_folder(folder)
+
+    def show_settings(self):
+        """Ouvre la fenêtre de paramètres, une seule instance réutilisée."""
+        if self.settings_window is None:
+            self.settings_window = SettingsWindow(
+                self,
+                library_paths=lambda: [entry["path"] for entry in self.bookshelf_page.library])
+            self.settings_window.settings_changed.connect(self.apply_setting)
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def apply_setting(self, key):
+        """Répercute un réglage sur les pages déjà construites.
+
+        Les réglages lus au vol (molette, extensions masquées, traces) n'ont
+        rien à faire ici : seuls ceux qui vivent dans des widgets déjà en place
+        demandent une reconstruction.
+        """
+        rebuild = key in ("*", "thumbnail_size", "hide_extensions",
+                          "thumbnail_cache_cleared")
+        if key in ("*", "default_sort"):
+            self.bookshelf_page.apply_sort(settings.get("default_sort") == "az",
+                                           save=False)
+            rebuild = True
+        if not rebuild:
+            return
+        current = self.stacked_widget.currentWidget()
+        if current is self.bookshelf_page:
+            self.bookshelf_page.refresh_shelf()
+        elif current is self.folder_view_page:
+            self.folder_view_page.refresh_view()
 
 def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
     """Génère toutes les vignettes PDF, CBZ, ZIP, RAR et CBR d'un dossier dans .thumbnails, avec callback de progression"""
@@ -3151,7 +3327,10 @@ def main():
         QFontDatabase.addApplicationFont(font_path)
         app.setFont(QFont("Inter"))
     window = MainWindow()
-    window.show()
+    if settings.get("start_fullscreen"):
+        window.showFullScreen()
+    else:
+        window.show()
     sys.exit(app.exec())
 
 if __name__ == "__main__":

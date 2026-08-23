@@ -144,9 +144,6 @@ SCROLL_AREA_STYLE = """
 # Style pour les boutons icônes simples (sans hover)
 ICON_BUTTON_STYLE = "background: none; border: none;"
 
-# Style pour le bouton retour
-BACK_BUTTON_STYLE = "background: none; border: none; font-size: 28px;"
-
 # Style pour le bouton d'ajout de la bibliothèque
 BOOKSHELF_ADD_BUTTON_STYLE = """
     QPushButton {
@@ -290,3 +287,304 @@ HOVER_ICON_BUTTON_STYLE = """
         border-radius: 18px;
     }
 """ 
+
+# =====================================================================================
+# FENETRE DE PARAMETRES
+# =====================================================================================
+# Bouton engrenage de la page d'accueil : meme pilule que les actions voisines,
+# mais carre-arrondi pour ne pas concurrencer les deux entrees principales.
+HOME_ICON_BUTTON_STYLE = """
+    QPushButton {
+        background: #ffffff;
+        border: 2px solid #d9dde3;
+        border-radius: 27px;
+    }
+    QPushButton:hover   { border-color: #e74c3c; background: #fdf1ef; }
+    QPushButton:pressed { background: #f2f4f6; }
+"""
+
+# Fond de la fenetre : le meme blanc casse que le reste de l'application.
+SETTINGS_WINDOW_STYLE = """
+    QDialog { background: #f6fafd; }
+    QWidget#settingsBody { background: transparent; }
+"""
+
+SETTINGS_TITLE_STYLE = """
+    color: #1b1f27;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 26px;
+    font-weight: bold;
+"""
+
+SETTINGS_SUBTITLE_STYLE = """
+    color: #6b7280;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+"""
+
+# Onglets : plats, l'onglet actif est souligne par l'accent.
+SETTINGS_TAB_BUTTON_STYLE = """
+    QPushButton {
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        padding: 8px 4px;
+        color: #6b7280;
+        font-family: 'Inter', sans-serif;
+        font-size: 15px;
+    }
+    QPushButton:hover   { color: #1b1f27; }
+    QPushButton:checked {
+        color: #1b1f27;
+        font-weight: bold;
+        border-bottom: 3px solid #e74c3c;
+    }
+"""
+
+# Titre de section, precede d'une barre d'accent dessinee par un QFrame.
+SETTINGS_SECTION_TITLE_STYLE = """
+    color: #1b1f27;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 16px;
+    font-weight: bold;
+"""
+
+SETTINGS_SECTION_BAR_STYLE = "background: #e74c3c; border: none; border-radius: 2px;"
+
+# Carte blanche qui porte un reglage.
+SETTINGS_ROW_STYLE = """
+    QWidget#settingsRow {
+        background: #ffffff;
+        border: 1px solid #e6e9ee;
+        border-radius: 12px;
+    }
+"""
+
+SETTINGS_ROW_LABEL_STYLE = """
+    color: #1b1f27;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+"""
+
+SETTINGS_ROW_DESC_STYLE = """
+    color: #6b7280;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+"""
+
+SETTINGS_VALUE_STYLE = """
+    color: #1b1f27;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+"""
+
+SETTINGS_COMBO_STYLE = """
+    QComboBox {
+        background: #ffffff;
+        border: 1px solid #d9dde3;
+        border-radius: 8px;
+        padding: 6px 12px;
+        color: #1b1f27;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+    }
+    QComboBox:hover { border-color: #e74c3c; }
+    /* Pas de regle ::drop-down : la fleche reste celle du style Fusion. La
+       redessiner demanderait une image, et un chemin en dur ne survit pas a
+       l'empaquetage PyInstaller. */
+    QComboBox QAbstractItemView {
+        background: #ffffff;
+        border: 1px solid #d9dde3;
+        outline: none;
+        selection-background-color: #e74c3c;
+        selection-color: #ffffff;
+    }
+"""
+
+SETTINGS_SLIDER_STYLE = """
+    QSlider::groove:horizontal {
+        height: 4px; background: #e6e9ee; border-radius: 2px;
+    }
+    QSlider::sub-page:horizontal {
+        height: 4px; background: #e74c3c; border-radius: 2px;
+    }
+    QSlider::handle:horizontal {
+        width: 16px; height: 16px; margin: -6px 0;
+        background: #ffffff; border: 2px solid #e74c3c; border-radius: 8px;
+    }
+    QSlider::handle:horizontal:hover { background: #fdf1ef; }
+"""
+
+# Bouton d'action dans une carte (vider le cache, ouvrir un dossier...).
+SETTINGS_ACTION_BUTTON_STYLE = """
+    QPushButton {
+        background: #ffffff;
+        border: 2px solid #d9dde3;
+        border-radius: 16px;
+        padding: 0px 16px;
+        color: #1b1f27;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        font-weight: bold;
+    }
+    QPushButton:hover   { border-color: #e74c3c; color: #e74c3c; }
+    QPushButton:pressed { background: #f2f4f6; }
+"""
+
+# Barre du bas : une action pleine a droite, une action discrete a gauche.
+SETTINGS_PRIMARY_BUTTON_STYLE = """
+    QPushButton {
+        background: #e74c3c;
+        border: none;
+        border-radius: 18px;
+        padding: 0px 22px;
+        color: #ffffff;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        font-weight: bold;
+    }
+    QPushButton:hover   { background: #ef6152; }
+    QPushButton:pressed { background: #c9402f; }
+"""
+
+SETTINGS_LINK_BUTTON_STYLE = """
+    QPushButton {
+        background: transparent;
+        border: none;
+        color: #6b7280;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+    }
+    QPushButton:hover { color: #e74c3c; }
+"""
+
+# Interrupteur : les couleurs sont peintes a la main, QSS ne sait pas dessiner
+# un rail et sa pastille. Elles vivent ici pour rester avec le reste du theme.
+SETTINGS_SWITCH_COLORS = {
+    "track_off": "#d9dde3",
+    "track_on": "#e74c3c",
+    "track_off_hover": "#c9cfd8",
+    "track_on_hover": "#ef6152",
+    "knob": "#ffffff",
+}
+
+
+# =====================================================================================
+# BARRE DU LECTEUR
+# =====================================================================================
+# Meme grammaire que les en-tetes de la bibliotheque - un retour detache, des
+# actions reunies dans une pilule - mais transposee sur fond clair : ici c'est
+# la page du manga qui doit tenir l'attention, pas la barre.
+READER_BAR_HEIGHT = 56
+READER_BTN_SIZE = 34
+READER_GROUP_HEIGHT = 42
+
+# Fond de la barre : une bande blanche posee sur le fond de l'application.
+READER_BAR_STYLE = """
+    QWidget#readerBar {
+        background: #ffffff;
+        border: 1px solid #e6e9ee;
+        border-radius: 14px;
+    }
+"""
+
+# Pilule claire qui reunit une famille d'actions (navigation, zoom).
+READER_GROUP_STYLE = """
+    QWidget#readerGroup {
+        background: #f2f4f6;
+        border: 1px solid #e6e9ee;
+        border-radius: 21px;
+    }
+"""
+
+# Boutons icone : plats au repos, l'accent n'apparait qu'au survol. Desactives,
+# ils s'effacent au lieu de disparaitre, pour que la barre garde sa forme.
+READER_ICON_BUTTON_STYLE = """
+    QPushButton {
+        background: transparent;
+        border: none;
+        border-radius: 17px;
+    }
+    QPushButton:hover    { background: rgba(231, 76, 60, 0.12); }
+    QPushButton:pressed  { background: rgba(231, 76, 60, 0.22); }
+    QPushButton:disabled { background: transparent; }
+"""
+
+# Retour : detache de la pilule, cercle blanc borde comme sur l'accueil.
+READER_BACK_BUTTON_STYLE = """
+    QPushButton {
+        background: #ffffff;
+        border: 2px solid #d9dde3;
+        border-radius: 21px;
+    }
+    QPushButton:hover   { border-color: #e74c3c; background: #fdf1ef; }
+    QPushButton:pressed { background: #f2f4f6; }
+"""
+
+# Compteur de pages : la page courante ressort, le total reste en retrait.
+READER_PAGE_LABEL_STYLE = """
+    color: #1b1f27;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+"""
+
+# Niveau de zoom : c'est aussi le bouton qui rend la page a la fenetre.
+READER_ZOOM_LABEL_STYLE = """
+    QPushButton {
+        background: transparent;
+        border: none;
+        border-radius: 15px;
+        padding: 0px 8px;
+        color: #5a6270;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        font-weight: bold;
+    }
+    QPushButton:hover   { background: rgba(231, 76, 60, 0.12); color: #e74c3c; }
+    QPushButton:pressed { background: rgba(231, 76, 60, 0.22); }
+"""
+
+# Zone de lecture : une seconde carte sous la barre, pour que la page soit
+# posee sur quelque chose plutot que flottante sur le fond de l'application.
+READER_VIEW_STYLE = """
+    QScrollArea#readerView {
+        background: transparent;
+        border: 1px solid #e6e9ee;
+        border-radius: 14px;
+    }
+    QScrollBar:vertical {
+        background: transparent; width: 12px; margin: 6px 2px 6px 0;
+        border-radius: 6px;
+    }
+    QScrollBar:horizontal {
+        background: transparent; height: 12px; margin: 0 6px 2px 6px;
+        border-radius: 6px;
+    }
+    QScrollBar::handle:vertical {
+        background: #c2c9d3; min-height: 40px; border-radius: 6px;
+    }
+    QScrollBar::handle:horizontal {
+        background: #c2c9d3; min-width: 40px; border-radius: 6px;
+    }
+    QScrollBar::handle:vertical:hover,
+    QScrollBar::handle:horizontal:hover { background: #e74c3c; }
+    /* Fleches de bout de barre : elles n'apportent rien a la lecture. */
+    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+"""

@@ -23,16 +23,45 @@ A modern, offline manga and PDF reader with a beautiful, responsive interface an
 - **Covers**: Auto-generated for PDF, CBZ, ZIP, RAR/CBR, and image folders — including folders that only contain chapter sub-folders, where the first page of the first chapter becomes the cover.
 - **High-resolution thumbnails**: Cached at 3× the display size and rendered at the screen's exact physical pixels, so covers stay sharp at 100 %, 125 %, 150 % and 200 % Windows scaling.
 
+### Settings
+
+A gear button sits next to **BOOKSHELF** on the home page and opens a separate
+settings window. Every change is written to `settings.json` immediately — there
+is no Apply button — and takes effect at once, except where noted.
+
+| Tab | Setting | Effect |
+|---|---|---|
+| General | Opening page | Land on Home or straight in the Bookshelf |
+| General | Start fullscreen | Applied on the next launch |
+| Library | Thumbnail size | Small (150 px), Medium (200 px) or Large (260 px) covers; the grid reflows immediately |
+| Library | Default sort | Order applied to the bookshelf when it opens |
+| Library | Hide extensions | Shows `Chapter 12` instead of `Chapter 12.cbz`; items you renamed keep their alias |
+| Library | Generate thumbnails on add | Off, covers are built as they are displayed and adding a folder is instant |
+| Library | Fetch online info | Off, adding a folder contacts no server at all |
+| Reader | Wheel zoom step | 5 % to 50 % per notch |
+| Reader | Invert wheel | Wheel up zooms out |
+| Reader | Keep zoom | Off, every page starts fitted to the window again |
+| Advanced | Thumbnail cache | Deletes every `.thumbnails` folder of the library, after confirmation |
+| Advanced | Configuration files | Opens the folder holding `library.json` and `settings.json` |
+| Advanced | Debug traces | Same traces as `PAKU_DEBUG`, without restarting the app |
+
+**Reset settings** at the bottom left puts every option back to its original
+value, which is also the behaviour of a fresh install: as long as no setting is
+touched, PAKU behaves exactly as before.
+
 ### Reader
 
 - **Multi-format**: PDF, CBZ, ZIP, RAR, and plain image folders.
 - **Mouse wheel to zoom**, anchored on the cursor — the point under the pointer stays put.
 - **Left-click and drag to pan** when the page is larger than the window.
 - **Auto-fit**: Each page fits the window until you zoom manually; after that your zoom level is kept across pages.
+- **Reader bar**: back on the left, page navigation in the middle, zoom on the right — icon buttons whose tooltips carry the keyboard shortcut. The current page is bold, the total stays muted, and the chevrons dim at the first and last page.
+- **Zoom indicator**: the percentage between the two zoom buttons is itself a button — click it to fit the page back to the window after zooming by hand.
 
 ### Interface
 
 - Unified header bar across the library, folder and chapter pages: a translucent action pill, a single accent-coloured primary action, and a scrim that keeps the artwork readable behind the title.
+- The reader repeats that grammar on a light ground: a detached round back button, actions gathered in pills, and a page area framed as a card with slim rounded scrollbars.
 - Frameless progress card matching the app theme, with elided file names.
 - Responsive grid that adapts to the window width.
 - Donation buttons: BuyMeACoffee and Paypal, from the home page.
@@ -79,6 +108,9 @@ The application writes small hidden files next to your manga:
 | `.languages.json` | Per-file language choice |
 | `.anilist.json` | Synopsis (one entry per language), tags and banner |
 
+`settings.json`, next to `library.json`, holds the options of the settings
+window. Deleting it restores every default.
+
 `library.json`, at the root of the project, holds the list of folders in your bookshelf.
 
 ### Flags
@@ -87,7 +119,7 @@ The six flags in `assets/icons/flags/` are plain SVG files and can be swapped wi
 
 ## Future Development
 
-- Fullscreen mode
+- Fullscreen toggle from the reader
 - Page rotation
 - Text extraction
 - Recent files history
