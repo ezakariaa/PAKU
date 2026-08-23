@@ -33,6 +33,8 @@ PALETTES = {
         "accent_wash_strong": "rgba(231, 76, 60, 0.22)",
         "tag_bg": "#e6dca4",
         "tag_text": "#444444",
+        "shadow": "#0b1220",
+        "shadow_alpha": "90",
     },
     "dark": {
         "bg": "#14171d",
@@ -52,6 +54,8 @@ PALETTES = {
         "accent_wash_strong": "rgba(231, 76, 60, 0.34)",
         "tag_bg": "#3b3524",
         "tag_text": "#e6dca4",
+        "shadow": "#000000",
+        "shadow_alpha": "190",
     },
 }
 
@@ -140,6 +144,30 @@ THUMBNAIL_IMAGE_HOVER_STYLE = """
     background: transparent;
     transition: border-color 0.2s;
 """
+
+# Ombre portée sous une pochette. QSS ne sait pas dessiner d'ombre : c'est un
+# QGraphicsDropShadowEffect qui s'en charge, d'où des valeurs et non du style.
+# Le flou et le décalage doivent rester dans la marge laissée par la vignette
+# (THUMB_SHADOW_MARGINS dans main.py), sinon le bord de l'ombre est rogné.
+THUMBNAIL_SHADOW_COLORS = {
+    "color": "@shadow",
+    "alpha": "@shadow_alpha",
+    "blur": "26",
+    # Lumiere venue d'en haut a gauche : l'ombre tombe vers le bas a droite.
+    "offset_x": "3",
+    "offset_y": "8",
+}
+
+# Pastille du nombre de chapitres, posée sur la pochette. Elle est peinte sur
+# l'illustration, jamais sur le fond de l'application : ses couleurs ne suivent
+# donc pas le thème, comme la pastille de menu juste au-dessus.
+THUMBNAIL_BADGE_COLORS = {
+    "background": "#11141b",
+    "background_alpha": "190",
+    "border": "#ffffff",
+    "border_alpha": "56",
+    "text": "#ffffff",
+}
 
 # Style pour le menu de la vignette, posé sur le coin de la pochette
 THUMBNAIL_MENU_BUTTON_STYLE = """

@@ -43,7 +43,8 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QLineEdit
 )
 from PySide6.QtGui import (
-    QFont, QPixmap, QIcon, QImage, QImageReader, QFontDatabase, QPainter, QColor,
+    QFont, QFontMetrics, QPixmap, QIcon, QImage, QImageReader, QFontDatabase,
+    QPainter, QColor,
     QDesktopServices, QBrush, QPen, QPainterPath, QLinearGradient, QPalette,
     QActionGroup
 )
@@ -110,6 +111,11 @@ LANGUAGE_FILE = ".languages.json"
 THUMB_FLAG_HEIGHT = 21
 
 THUMB_MENU_SIZE = 28          # pastille ⋯ dans le coin de la pochette
+# Marge laissée autour d'une pochette pour que son ombre portée ait la place de
+# s'étaler : gauche, haut, droite, bas. L'ombre descend, d'où le bas plus large.
+THUMB_SHADOW_MARGINS = (12, 6, 18, 22)
+# L'espacement de la grille vient en plus de ces marges.
+GRID_SPACING = 8
 # Les vignettes sont mises en cache à 3x la taille d'affichage : de quoi rester nettes
 # jusqu'à une mise à l'échelle Windows de 300 %.
 THUMB_CACHE_SIZE = (THUMB_DISPLAY_SIZE[0] * 3, THUMB_DISPLAY_SIZE[1] * 3)
@@ -426,6 +432,71 @@ class FlagBadge(QLabel):
         self.setPixmap(pixmap)
 
 
+class CountBadge(QLabel):
+    """Nombre de chapitres d'une collection, posé dans le coin d'une pochette.
+
+    Peinte plutôt qu'habillée en QSS : elle repose sur l'illustration, où un
+    fond opaque et un texte blanc restent lisibles quelle que soit la pochette.
+    """
+
+    def __init__(self, count, height=THUMB_FLAG_HEIGHT, parent=None):
+        super().__init__(parent)
+        self.count = count
+        self.setFixedSize(max(round(height * 3 / 2), self._text_width(height)), height)
+        self.setToolTip("1 chapitre" if count == 1 else f"{count} chapitres")
+        # Le clic doit continuer d'ouvrir la collection, pas mourir sur la
+        # pastille.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # Même remise à zéro que le drapeau : la feuille de la pochette n'a pas
+        # de sélecteur et Qt la propage aux enfants.
+        self.setStyleSheet("background: transparent; border: none;")
+        self._render()
+
+    def _font(self, height):
+        font = QFont("Inter", max(8, round(height * 0.52)), QFont.Weight.Bold)
+        return font
+
+    def _text_width(self, height):
+        metrics = QFontMetrics(self._font(height))
+        return metrics.horizontalAdvance(str(self.count)) + 14
+
+    def _render(self):
+        colors = S.THUMBNAIL_BADGE_COLORS
+        ratio = self.devicePixelRatioF()
+        w = max(1, round(self.width() * ratio))
+        h = max(1, round(self.height() * ratio))
+        canvas = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        background = QColor(colors["background"])
+        background.setAlpha(int(colors["background_alpha"]))
+        border = QColor(colors["border"])
+        border.setAlpha(int(colors["border_alpha"]))
+        pen = QPen(border)
+        pen.setWidthF(ratio)
+        painter.setPen(pen)
+        painter.setBrush(background)
+        # Le tracé est rentré d'un demi-pixel : sinon le contour bave hors du
+        # rectangle et l'arrondi paraît ébréché.
+        inset = ratio / 2
+        painter.drawRoundedRect(QRectF(inset, inset, w - 2 * inset, h - 2 * inset),
+                                5 * ratio, 5 * ratio)
+
+        font = self._font(self.height())
+        font.setPointSizeF(font.pointSizeF() * ratio)
+        painter.setFont(font)
+        painter.setPen(QColor(colors["text"]))
+        painter.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, str(self.count))
+        painter.end()
+
+        pixmap = QPixmap.fromImage(canvas)
+        pixmap.setDevicePixelRatio(ratio)
+        self.setPixmap(pixmap)
+
+
 class ThumbnailMenuButton(QPushButton):
     """Pastille de menu posée sur la pochette.
 
@@ -602,7 +673,7 @@ class ThumbnailWidget(QWidget):
 
     def __init__(self, thumb_path, title_text, path=None, width=None,
                  height=None, show_menu=True, checkbox=None,
-                 language=None):
+                 language=None, count=None):
         super().__init__()
         self.thumb_path = thumb_path
         self._rendered_ratio = None
@@ -616,17 +687,23 @@ class ThumbnailWidget(QWidget):
         self.show_menu = show_menu
         self.checkbox = checkbox
         self.language = language
+        # None : la vignette n'est pas une collection. 0 : elle est vide, et il
+        # n'y a rien d'utile à afficher non plus.
+        self.count = count
         self.setObjectName("thumbnailWidget")
         self.setup_ui()
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # L'ombre portée déborde de la pochette : sans ces marges, le parent la
+        # rognerait net.
+        layout.setContentsMargins(*THUMB_SHADOW_MARGINS)
         layout.setSpacing(2)
         self.setStyleSheet("")
         self.img_label = RoundedLabel()
         self.img_label.setContentsMargins(0, 0, 0, 0)
         self.img_label.setFixedSize(self.thumb_width, self.thumb_height)
         self.img_label.setStyleSheet(S.THUMBNAIL_IMAGE_STYLE)
+        self.img_label.setGraphicsEffect(self.build_shadow())
         self.img_label.deferred_load = self.update_image
         self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.img_label, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -666,6 +743,12 @@ class ThumbnailWidget(QWidget):
             flag.move(self.thumb_width - flag.width() - corner,
                       self.thumb_height - flag.height() - corner)
             flag.raise_()
+        if self.count:
+            # Coin inférieur gauche, en vis-à-vis du drapeau de langue.
+            badge = CountBadge(self.count, parent=self.img_label)
+            corner = THUMB_BORDER_WIDTH + 5
+            badge.move(corner, self.thumb_height - badge.height() - corner)
+            badge.raise_()
         if self.show_menu and self.path:
             debug(f"[DEBUG] Création du menu contextuel pour : {self.path}")
             # Enfant du visuel, posé dans son coin supérieur droit : le bouton
@@ -1012,6 +1095,17 @@ class ThumbnailWidget(QWidget):
                                              "font-size: 12px;")
                 print(f"Erreur fatale lors de la création de l'image d'erreur: {e}")
 
+    def build_shadow(self):
+        """Ombre portée de la pochette, à la couleur du thème."""
+        values = S.THUMBNAIL_SHADOW_COLORS
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(int(values["blur"]))
+        shadow.setOffset(int(values["offset_x"]), int(values["offset_y"]))
+        color = QColor(values["color"])
+        color.setAlpha(int(values["alpha"]))
+        shadow.setColor(color)
+        return shadow
+
     def showEvent(self, event):
         """Re-rend la vignette si elle atterrit sur un écran d'un autre DPI."""
         super().showEvent(event)
@@ -1048,7 +1142,7 @@ class ResponsiveGridView(QWidget):
     def __init__(self):
         super().__init__()
         self.grid_layout = QGridLayout()
-        self.grid_layout.setSpacing(20)
+        self.grid_layout.setSpacing(GRID_SPACING)
         self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)  # centrer horizontalement
         self.grid_widget = QWidget()
         self.grid_widget.setLayout(self.grid_layout)
@@ -1069,7 +1163,10 @@ class ResponsiveGridView(QWidget):
 
     def column_count(self):
         width = self.width()
-        return max(1, width // (thumb_display_size()[0] + 20)) if width > 0 else 1
+        # Une colonne = la pochette, ses marges d'ombre et l'espacement.
+        step = (thumb_display_size()[0] + THUMB_SHADOW_MARGINS[0]
+                + THUMB_SHADOW_MARGINS[2] + GRID_SPACING)
+        return max(1, width // step) if width > 0 else 1
 
     def set_items(self, widgets):
         # Nettoyer les anciens widgets
@@ -1444,7 +1541,9 @@ class BookShelfPage(QWidget):
                 language = entry.get("language")
                 if not thumb_path:
                     thumb_path = create_default_thumbnail() or "assets/images/manga_sample.png"
-                vignette = ThumbnailWidget(thumb_path, name, path=path, language=language)
+                chapters = count_chapters(path)
+                vignette = ThumbnailWidget(thumb_path, name, path=path, language=language,
+                                           count=chapters)
                 def on_folder_selected(p=path):
                     debug(f"[DEBUG] Signal folder_selected émis avec : {p}")
                     self.folder_selected.emit(p)
@@ -1469,7 +1568,7 @@ class BookShelfPage(QWidget):
                             self.select_btn.setToolTip("Sélectionner des dossiers")
                     checkbox.stateChanged.connect(on_state_changed)
                     vignette = ThumbnailWidget(thumb_path, name, path=path, checkbox=checkbox,
-                                               language=language)
+                                               language=language, count=chapters)
                     vignette.clicked.connect(on_folder_selected)
                 
                 # Connecter les signaux une seule fois
@@ -2052,7 +2151,7 @@ class FolderViewPage(QWidget):
                                   "assets/images/manga_sample.png")
                 widget = ThumbnailWidget(
                     thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox,
-                    language=languages.get(item_name)
+                    language=languages.get(item_name), count=count_chapters(item_path)
                 )
                 widget.clicked.connect(
                     functools.partial(self.on_item_clicked, item_path)
@@ -3130,6 +3229,37 @@ def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
                 index['_folder_thumb.png'] = THUMB_CACHE_VERSION
 
     save_thumb_cache_index(thumb_dir, index)
+
+_CHILD_COUNT_CACHE = {}
+
+
+def count_chapters(folder_path):
+    """Nombre d'éléments lisibles d'un dossier : sous-dossiers et archives.
+
+    Mis en cache sur la date de modification du dossier : la barre de recherche
+    reconstruit la grille à chaque frappe, et un parcours par collection y
+    coûterait cher sur un disque externe.
+    """
+    try:
+        stamp = os.stat(folder_path).st_mtime_ns
+    except OSError:
+        return 0
+    cached = _CHILD_COUNT_CACHE.get(folder_path)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    total = 0
+    try:
+        with os.scandir(folder_path) as entries:
+            for entry in entries:
+                if entry.name.startswith('.'):
+                    continue
+                if entry.is_dir() or entry.name.lower().endswith(ARCHIVE_EXTENSIONS):
+                    total += 1
+    except OSError:
+        total = 0
+    _CHILD_COUNT_CACHE[folder_path] = (stamp, total)
+    return total
+
 
 def create_default_thumbnail():
     """Crée une image par défaut programmatiquement"""

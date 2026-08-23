@@ -21,6 +21,8 @@ A modern, offline manga and PDF reader with a beautiful, responsive interface an
   - The lookup uses the **alias** when you set one, so renaming a badly-named folder fixes its metadata.
   - The synopsis is shown **in the language you picked**, falling back to English when no translation exists. Translations already fetched are kept, so switching back and forth costs nothing.
 - **Covers**: Auto-generated for PDF, CBZ, ZIP, RAR/CBR, and image folders — including folders that only contain chapter sub-folders, where the first page of the first chapter becomes the cover.
+- **Cover shadows**: Each cover casts a soft drop shadow, so the grid reads as a shelf rather than a sheet of stickers. The shadow follows the theme — light and diffuse on the light ground, deeper on the dark one.
+- **Chapter count**: A collection shows how many items it holds in the bottom-left corner of its cover, facing the language flag. Sub-folders carry one too; single files don't, and an empty collection stays bare. The count is cached on the folder's timestamp, so typing in the search bar doesn't re-scan the library.
 - **High-resolution thumbnails**: Cached at 3× the display size and rendered at the screen's exact physical pixels, so covers stay sharp at 100 %, 125 %, 150 % and 200 % Windows scaling.
 
 ### Themes
