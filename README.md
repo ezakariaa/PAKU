@@ -23,6 +23,13 @@ A modern, offline manga and PDF reader with a beautiful, responsive interface an
 - **Covers**: Auto-generated for PDF, CBZ, ZIP, RAR/CBR, and image folders — including folders that only contain chapter sub-folders, where the first page of the first chapter becomes the cover.
 - **High-resolution thumbnails**: Cached at 3× the display size and rendered at the screen's exact physical pixels, so covers stay sharp at 100 %, 125 %, 150 % and 200 % Windows scaling.
 
+### Themes
+
+- **Light and dark**, toggled by the moon / sun button next to the gear on the home page — one click in, one click out. The same choice sits in Settings → General → Theme, and it is remembered between sessions.
+- Colours live as tokens (`@surface`, `@text`, `@border`…) in `styles/styles.py` and are resolved for the active theme, so a new palette is a table entry, not a hunt through the code.
+- Switching rebuilds the pages and puts you back where you were — same page of the same file, same zoom.
+- Icons ship in a light and a dark variant and follow the theme; the icons that sit on a banner's dark scrim stay white in both.
+
 ### Settings
 
 A gear button sits next to **BOOKSHELF** on the home page and opens a separate
@@ -31,6 +38,7 @@ is no Apply button — and takes effect at once, except where noted.
 
 | Tab | Setting | Effect |
 |---|---|---|
+| General | Theme | Light or dark, same as the moon button on the home page |
 | General | Opening page | Land on Home or straight in the Bookshelf |
 | General | Start fullscreen | Applied on the next launch |
 | Library | Thumbnail size | Small (150 px), Medium (200 px) or Large (260 px) covers; the grid reflows immediately |
@@ -123,7 +131,6 @@ The six flags in `assets/icons/flags/` are plain SVG files and can be swapped wi
 - Page rotation
 - Text extraction
 - Recent files history
-- Customizable themes
 - Virtualised grid for very large folders
 
 ## Releases

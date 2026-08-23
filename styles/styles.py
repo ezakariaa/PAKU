@@ -1,6 +1,59 @@
 """
 Fichier central pour les styles QSS de l'application.
+
+Les couleurs qui changent avec le theme s'ecrivent en jetons - @surface, @text,
+@border... - et sont resolues par `set_theme()`. Les modules lisent la feuille
+resolue via l'objet `S` : `S.HOME_PRIMARY_BUTTON_STYLE`. Comme `S` est mute sur
+place, une bascule de theme suffit a mettre tout le monde a jour ; il reste aux
+pages a se reconstruire pour reposer leurs feuilles sur les widgets.
+
+L'accent rouge, les en-tetes poses sur une image (voile sombre, texte blanc) et
+la carte de progression ne dependent pas du theme : ils sont ecrits en dur.
 """
+
+# =====================================================================================
+# PALETTES
+# =====================================================================================
+PALETTES = {
+    "light": {
+        "bg": "#f6fafd",             # fond de l'application
+        "surface": "#ffffff",        # cartes, barres, champs
+        "surface_alt": "#f2f4f6",    # pilules et etats enfonces
+        "border": "#e6e9ee",
+        "border_strong": "#d9dde3",
+        "border_hover": "#c9cfd8",
+        "text": "#1b1f27",
+        "text_muted": "#5a6270",
+        "text_soft": "#8b94a3",      # le total de pages, a cote du numero courant
+        "thumb_border": "#111111",
+        "scroll_handle": "#222222",
+        "scroll_handle_soft": "#c2c9d3",
+        "accent_tint": "#fdf1ef",    # survol tres pale d'un bouton borde
+        "accent_wash": "rgba(231, 76, 60, 0.12)",
+        "accent_wash_strong": "rgba(231, 76, 60, 0.22)",
+        "tag_bg": "#e6dca4",
+        "tag_text": "#444444",
+    },
+    "dark": {
+        "bg": "#14171d",
+        "surface": "#1e222a",
+        "surface_alt": "#272c35",
+        "border": "#333a45",
+        "border_strong": "#414a57",
+        "border_hover": "#4d5766",
+        "text": "#e8eaee",
+        "text_muted": "#9aa3b0",
+        "text_soft": "#6f7885",
+        "thumb_border": "#39414d",
+        "scroll_handle": "#4b5563",
+        "scroll_handle_soft": "#414a57",
+        "accent_tint": "#2b2024",
+        "accent_wash": "rgba(231, 76, 60, 0.22)",
+        "accent_wash_strong": "rgba(231, 76, 60, 0.34)",
+        "tag_bg": "#3b3524",
+        "tag_text": "#e6dca4",
+    },
+}
 
 # =====================================================================================
 # PAGE D'ACCUEIL
@@ -28,20 +81,20 @@ HOME_PRIMARY_BUTTON_STYLE = """
 # Action secondaire : ouvrir un fichier isolé.
 HOME_SECONDARY_BUTTON_STYLE = """
     QPushButton {
-        background: #ffffff;
-        border: 2px solid #d9dde3;
+        background: @surface;
+        border: 2px solid @border_strong;
         border-radius: 27px;
-        color: #1b1f27;
+        color: @text;
         font-family: 'Inter', sans-serif;
         font-size: 15px;
         font-weight: bold;
     }
     QPushButton:hover   { border-color: #e74c3c; color: #e74c3c; }
-    QPushButton:pressed { background: #f2f4f6; }
+    QPushButton:pressed { background: @surface_alt; }
 """
 
 # Sous-titre sous le logo.
-HOME_SUBTITLE_STYLE = "color: #5a6270; background: transparent; border: none;"
+HOME_SUBTITLE_STYLE = "color: @text_muted; background: transparent; border: none;"
 
 # Boutons de soutien : couleurs de marque conservées, forme alignée sur le reste.
 BMC_BUTTON_STYLE = """
@@ -74,7 +127,7 @@ PAYPAL_BUTTON_STYLE = """
 
 # Style pour l'image de la vignette
 THUMBNAIL_IMAGE_STYLE = """
-    border: 4px solid #111;
+    border: 4px solid @thumb_border;
     border-radius: 14px;
     background: transparent;
     transition: border-color 0.2s;
@@ -136,7 +189,7 @@ SCROLL_AREA_STYLE = """
         border-radius: 7px;
     }
     QScrollBar::handle:vertical {
-        background: #222; min-height: 40px; border-radius: 7px;
+        background: @scroll_handle; min-height: 40px; border-radius: 7px;
     }
     QScrollBar::handle:vertical:hover { background: #e74c3c; }
 """
@@ -151,7 +204,7 @@ BOOKSHELF_ADD_BUTTON_STYLE = """
         border: none;
     }
     QPushButton:hover {
-        background: #eee;
+        background: @surface_alt;
     }
 """
 
@@ -244,7 +297,7 @@ HEADER_PRIMARY_BUTTON_STYLE = """
 """
 
 # Style pour les icônes du header Bookshelf
-ICON_BUTTON_STYLE_BOOKSHELF = "background: none; border: none; color: #000;"
+ICON_BUTTON_STYLE_BOOKSHELF = "background: none; border: none; color: @text;"
 
 # Style pour le titre du header dossier
 PAGE_TITLE_STYLE = """
@@ -283,7 +336,7 @@ HOVER_ICON_BUTTON_STYLE = """
     }
     QPushButton:hover {
         color: #e74c3c;
-        background: #f0f0f0;
+        background: @surface_alt;
         border-radius: 18px;
     }
 """ 
@@ -295,22 +348,22 @@ HOVER_ICON_BUTTON_STYLE = """
 # mais carre-arrondi pour ne pas concurrencer les deux entrees principales.
 HOME_ICON_BUTTON_STYLE = """
     QPushButton {
-        background: #ffffff;
-        border: 2px solid #d9dde3;
+        background: @surface;
+        border: 2px solid @border_strong;
         border-radius: 27px;
     }
-    QPushButton:hover   { border-color: #e74c3c; background: #fdf1ef; }
-    QPushButton:pressed { background: #f2f4f6; }
+    QPushButton:hover   { border-color: #e74c3c; background: @accent_tint; }
+    QPushButton:pressed { background: @surface_alt; }
 """
 
 # Fond de la fenetre : le meme blanc casse que le reste de l'application.
 SETTINGS_WINDOW_STYLE = """
-    QDialog { background: #f6fafd; }
+    QDialog { background: @bg; }
     QWidget#settingsBody { background: transparent; }
 """
 
 SETTINGS_TITLE_STYLE = """
-    color: #1b1f27;
+    color: @text;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -319,7 +372,7 @@ SETTINGS_TITLE_STYLE = """
 """
 
 SETTINGS_SUBTITLE_STYLE = """
-    color: #6b7280;
+    color: @text_muted;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -333,13 +386,13 @@ SETTINGS_TAB_BUTTON_STYLE = """
         border: none;
         border-bottom: 3px solid transparent;
         padding: 8px 4px;
-        color: #6b7280;
+        color: @text_muted;
         font-family: 'Inter', sans-serif;
         font-size: 15px;
     }
-    QPushButton:hover   { color: #1b1f27; }
+    QPushButton:hover   { color: @text; }
     QPushButton:checked {
-        color: #1b1f27;
+        color: @text;
         font-weight: bold;
         border-bottom: 3px solid #e74c3c;
     }
@@ -347,7 +400,7 @@ SETTINGS_TAB_BUTTON_STYLE = """
 
 # Titre de section, precede d'une barre d'accent dessinee par un QFrame.
 SETTINGS_SECTION_TITLE_STYLE = """
-    color: #1b1f27;
+    color: @text;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -360,14 +413,14 @@ SETTINGS_SECTION_BAR_STYLE = "background: #e74c3c; border: none; border-radius: 
 # Carte blanche qui porte un reglage.
 SETTINGS_ROW_STYLE = """
     QWidget#settingsRow {
-        background: #ffffff;
-        border: 1px solid #e6e9ee;
+        background: @surface;
+        border: 1px solid @border;
         border-radius: 12px;
     }
 """
 
 SETTINGS_ROW_LABEL_STYLE = """
-    color: #1b1f27;
+    color: @text;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -376,7 +429,7 @@ SETTINGS_ROW_LABEL_STYLE = """
 """
 
 SETTINGS_ROW_DESC_STYLE = """
-    color: #6b7280;
+    color: @text_muted;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -384,7 +437,7 @@ SETTINGS_ROW_DESC_STYLE = """
 """
 
 SETTINGS_VALUE_STYLE = """
-    color: #1b1f27;
+    color: @text;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -394,11 +447,11 @@ SETTINGS_VALUE_STYLE = """
 
 SETTINGS_COMBO_STYLE = """
     QComboBox {
-        background: #ffffff;
-        border: 1px solid #d9dde3;
+        background: @surface;
+        border: 1px solid @border_strong;
         border-radius: 8px;
         padding: 6px 12px;
-        color: #1b1f27;
+        color: @text;
         font-family: 'Inter', sans-serif;
         font-size: 13px;
     }
@@ -407,8 +460,8 @@ SETTINGS_COMBO_STYLE = """
        redessiner demanderait une image, et un chemin en dur ne survit pas a
        l'empaquetage PyInstaller. */
     QComboBox QAbstractItemView {
-        background: #ffffff;
-        border: 1px solid #d9dde3;
+        background: @surface;
+        border: 1px solid @border_strong;
         outline: none;
         selection-background-color: #e74c3c;
         selection-color: #ffffff;
@@ -417,32 +470,32 @@ SETTINGS_COMBO_STYLE = """
 
 SETTINGS_SLIDER_STYLE = """
     QSlider::groove:horizontal {
-        height: 4px; background: #e6e9ee; border-radius: 2px;
+        height: 4px; background: @border; border-radius: 2px;
     }
     QSlider::sub-page:horizontal {
         height: 4px; background: #e74c3c; border-radius: 2px;
     }
     QSlider::handle:horizontal {
         width: 16px; height: 16px; margin: -6px 0;
-        background: #ffffff; border: 2px solid #e74c3c; border-radius: 8px;
+        background: @surface; border: 2px solid #e74c3c; border-radius: 8px;
     }
-    QSlider::handle:horizontal:hover { background: #fdf1ef; }
+    QSlider::handle:horizontal:hover { background: @accent_tint; }
 """
 
 # Bouton d'action dans une carte (vider le cache, ouvrir un dossier...).
 SETTINGS_ACTION_BUTTON_STYLE = """
     QPushButton {
-        background: #ffffff;
-        border: 2px solid #d9dde3;
+        background: @surface;
+        border: 2px solid @border_strong;
         border-radius: 16px;
         padding: 0px 16px;
-        color: #1b1f27;
+        color: @text;
         font-family: 'Inter', sans-serif;
         font-size: 13px;
         font-weight: bold;
     }
     QPushButton:hover   { border-color: #e74c3c; color: #e74c3c; }
-    QPushButton:pressed { background: #f2f4f6; }
+    QPushButton:pressed { background: @surface_alt; }
 """
 
 # Barre du bas : une action pleine a droite, une action discrete a gauche.
@@ -465,7 +518,7 @@ SETTINGS_LINK_BUTTON_STYLE = """
     QPushButton {
         background: transparent;
         border: none;
-        color: #6b7280;
+        color: @text_muted;
         font-family: 'Inter', sans-serif;
         font-size: 13px;
     }
@@ -475,9 +528,9 @@ SETTINGS_LINK_BUTTON_STYLE = """
 # Interrupteur : les couleurs sont peintes a la main, QSS ne sait pas dessiner
 # un rail et sa pastille. Elles vivent ici pour rester avec le reste du theme.
 SETTINGS_SWITCH_COLORS = {
-    "track_off": "#d9dde3",
+    "track_off": "@border_strong",
     "track_on": "#e74c3c",
-    "track_off_hover": "#c9cfd8",
+    "track_off_hover": "@border_hover",
     "track_on_hover": "#ef6152",
     "knob": "#ffffff",
 }
@@ -496,8 +549,8 @@ READER_GROUP_HEIGHT = 42
 # Fond de la barre : une bande blanche posee sur le fond de l'application.
 READER_BAR_STYLE = """
     QWidget#readerBar {
-        background: #ffffff;
-        border: 1px solid #e6e9ee;
+        background: @surface;
+        border: 1px solid @border;
         border-radius: 14px;
     }
 """
@@ -505,8 +558,8 @@ READER_BAR_STYLE = """
 # Pilule claire qui reunit une famille d'actions (navigation, zoom).
 READER_GROUP_STYLE = """
     QWidget#readerGroup {
-        background: #f2f4f6;
-        border: 1px solid #e6e9ee;
+        background: @surface_alt;
+        border: 1px solid @border;
         border-radius: 21px;
     }
 """
@@ -519,25 +572,25 @@ READER_ICON_BUTTON_STYLE = """
         border: none;
         border-radius: 17px;
     }
-    QPushButton:hover    { background: rgba(231, 76, 60, 0.12); }
-    QPushButton:pressed  { background: rgba(231, 76, 60, 0.22); }
+    QPushButton:hover    { background: @accent_wash; }
+    QPushButton:pressed  { background: @accent_wash_strong; }
     QPushButton:disabled { background: transparent; }
 """
 
 # Retour : detache de la pilule, cercle blanc borde comme sur l'accueil.
 READER_BACK_BUTTON_STYLE = """
     QPushButton {
-        background: #ffffff;
-        border: 2px solid #d9dde3;
+        background: @surface;
+        border: 2px solid @border_strong;
         border-radius: 21px;
     }
-    QPushButton:hover   { border-color: #e74c3c; background: #fdf1ef; }
-    QPushButton:pressed { background: #f2f4f6; }
+    QPushButton:hover   { border-color: #e74c3c; background: @accent_tint; }
+    QPushButton:pressed { background: @surface_alt; }
 """
 
 # Compteur de pages : la page courante ressort, le total reste en retrait.
 READER_PAGE_LABEL_STYLE = """
-    color: #1b1f27;
+    color: @text;
     background: transparent;
     border: none;
     font-family: 'Inter', sans-serif;
@@ -551,13 +604,13 @@ READER_ZOOM_LABEL_STYLE = """
         border: none;
         border-radius: 15px;
         padding: 0px 8px;
-        color: #5a6270;
+        color: @text_muted;
         font-family: 'Inter', sans-serif;
         font-size: 13px;
         font-weight: bold;
     }
-    QPushButton:hover   { background: rgba(231, 76, 60, 0.12); color: #e74c3c; }
-    QPushButton:pressed { background: rgba(231, 76, 60, 0.22); }
+    QPushButton:hover   { background: @accent_wash; color: #e74c3c; }
+    QPushButton:pressed { background: @accent_wash_strong; }
 """
 
 # Zone de lecture : une seconde carte sous la barre, pour que la page soit
@@ -565,7 +618,7 @@ READER_ZOOM_LABEL_STYLE = """
 READER_VIEW_STYLE = """
     QScrollArea#readerView {
         background: transparent;
-        border: 1px solid #e6e9ee;
+        border: 1px solid @border;
         border-radius: 14px;
     }
     QScrollBar:vertical {
@@ -577,10 +630,10 @@ READER_VIEW_STYLE = """
         border-radius: 6px;
     }
     QScrollBar::handle:vertical {
-        background: #c2c9d3; min-height: 40px; border-radius: 6px;
+        background: @scroll_handle_soft; min-height: 40px; border-radius: 6px;
     }
     QScrollBar::handle:horizontal {
-        background: #c2c9d3; min-width: 40px; border-radius: 6px;
+        background: @scroll_handle_soft; min-width: 40px; border-radius: 6px;
     }
     QScrollBar::handle:vertical:hover,
     QScrollBar::handle:horizontal:hover { background: #e74c3c; }
@@ -588,3 +641,86 @@ READER_VIEW_STYLE = """
     QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
     QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 """
+
+
+# =====================================================================================
+# STYLES DEPENDANT DU THEME, POSES SUR LE FOND DE L'APPLICATION
+# =====================================================================================
+# Ces trois-la vivaient en clair dans main.py, ou le theme ne pouvait pas les
+# atteindre.
+APP_BACKGROUND_STYLE = "background-color: @bg;"
+
+THUMBNAIL_TITLE_STYLE = "font-size: 15px; color: @text; margin: 0px; padding: 0px;"
+
+# Synopsis AniList, sous la banniere de la vue dossier.
+FOLDER_DESC_STYLE = "font-size: 15px; color: @text_muted; margin-top: 10px;"
+
+# Tags AniList, en pastilles.
+FOLDER_TAG_STYLE = """
+    background: @tag_bg;
+    color: @tag_text;
+    border-radius: 12px;
+    padding: 4px 14px;
+    font-size: 13px;
+    font-weight: bold;
+    margin-bottom: 2px;
+"""
+
+# Filet horizontal, sous les onglets de la fenetre de parametres.
+SETTINGS_RULE_STYLE = "background: @border; border: none;"
+
+
+# =====================================================================================
+# MOTEUR DE THEMES
+# =====================================================================================
+class _Styles:
+    """Feuilles resolues pour le theme courant.
+
+    Les attributs sont remplaces a chaque bascule : les modules gardent leur
+    reference a `S` et n'ont rien a reimporter.
+    """
+
+
+S = _Styles()
+
+# Tout ce qui se termine par _STYLE ou _COLORS est une feuille a resoudre.
+_TEMPLATES = {name: value for name, value in list(globals().items())
+              if name.isupper() and ("_STYLE" in name or "_COLORS" in name)}
+
+# Les jetons les plus longs d'abord : sans cela @border avalerait @border_strong.
+_TOKENS = sorted(PALETTES["light"], key=len, reverse=True)
+
+_THEME = "light"
+
+
+def _render(text, palette):
+    for token in _TOKENS:
+        text = text.replace("@" + token, palette[token])
+    return text
+
+
+def set_theme(name):
+    """Resout toutes les feuilles pour le theme demande. Retourne son nom."""
+    global _THEME
+    if name not in PALETTES:
+        name = "light"
+    _THEME = name
+    palette = PALETTES[name]
+    for key, template in _TEMPLATES.items():
+        if isinstance(template, dict):
+            setattr(S, key, {k: _render(v, palette) for k, v in template.items()})
+        else:
+            setattr(S, key, _render(template, palette))
+    return name
+
+
+def current_theme():
+    return _THEME
+
+
+def theme_color(token):
+    """Couleur brute du theme courant, pour ce que QSS ne peut pas peindre."""
+    return PALETTES[_THEME][token]
+
+
+set_theme("light")

@@ -16,6 +16,7 @@ SETTINGS_FILE = "settings.json"
 # Valeurs par défaut = comportement de l'application avant l'arrivée des réglages.
 DEFAULTS = {
     # --- Général ---
+    "theme": "light",                # "light" | "dark"
     "startup_page": "home",          # "home" | "bookshelf"
     "start_fullscreen": False,
     # --- Bibliothèque ---

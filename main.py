@@ -20,6 +20,16 @@ def debug(message):
         print(message)
 
 
+def themed_icon(name):
+    """Chemin d'une icône dans la teinte du thème courant.
+
+    Les icônes posées sur un bandeau à voile sombre gardent leur variante
+    blanche en dur : ce sont les seules dont le fond ne change pas.
+    """
+    suffix = "-white" if current_theme() == "dark" else ""
+    return resource_path(f"assets/icons/{name}{suffix}.svg")
+
+
 def resource_path(relative_path):
     """Retourne le chemin absolu vers un fichier ressource, compatible PyInstaller et dev."""
     if hasattr(sys, '_MEIPASS'):
@@ -43,21 +53,9 @@ from PySide6.QtSvg import QSvgRenderer
 
 # Importer les styles
 from styles.styles import (
-    HOME_PRIMARY_BUTTON_STYLE, HOME_SECONDARY_BUTTON_STYLE, HOME_SUBTITLE_STYLE,
-    HOME_ICON_BUTTON_STYLE,
-    BMC_BUTTON_STYLE, PAYPAL_BUTTON_STYLE, HOME_SUPPORT_HEIGHT, THUMBNAIL_IMAGE_STYLE,
-    THUMBNAIL_IMAGE_HOVER_STYLE, THUMBNAIL_MENU_BUTTON_STYLE,
-    SCROLL_AREA_STYLE,
-    PAGE_TITLE_STYLE, FOLDER_PATH_STYLE,
-    PAGE_TITLE_STYLE_BOOKSHELF, HEADER_SUBTITLE_STYLE, HEADER_TOOLBAR_STYLE,
-    HEADER_ICON_BUTTON_STYLE, HEADER_BACK_BUTTON_STYLE, HEADER_SEARCH_STYLE,
-    HEADER_PRIMARY_BUTTON_STYLE,
-    PROGRESS_CARD_STYLE, PROGRESS_TITLE_STYLE, PROGRESS_PERCENT_STYLE,
-    PROGRESS_MESSAGE_STYLE, PROGRESS_BAR_STYLE,
+    S, set_theme, current_theme, theme_color, ACCENT,
+    HOME_SUPPORT_HEIGHT,
     READER_BAR_HEIGHT, READER_BTN_SIZE, READER_GROUP_HEIGHT,
-    READER_BAR_STYLE, READER_GROUP_STYLE, READER_ICON_BUTTON_STYLE,
-    READER_BACK_BUTTON_STYLE, READER_PAGE_LABEL_STYLE, READER_ZOOM_LABEL_STYLE,
-    READER_VIEW_STYLE
 )
 
 from ui.flowlayout import FlowLayout
@@ -491,7 +489,8 @@ class RoundedHeaderWidget(QWidget):
                 painter.drawImage(0, 0, cover)
                 painted = True
         if not painted:
-            painter.fillRect(self.rect(), QColor("#1b1f27" if self.scrim else "#f8f9fa"))
+            painter.fillRect(self.rect(),
+                             QColor("#1b1f27" if self.scrim else theme_color("surface")))
         if self.scrim:
             veil = QLinearGradient(0, 0, 0, self.height())
             veil.setColorAt(0.0, self.scrim[0])
@@ -499,7 +498,7 @@ class RoundedHeaderWidget(QWidget):
             painter.fillRect(self.rect(), QBrush(veil))
             painter.setPen(QColor(255, 255, 255, 28))
         else:
-            painter.setPen(QColor("#e9ecef"))
+            painter.setPen(QColor(theme_color("border")))
         painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
 
 # =====================================================================================
@@ -509,6 +508,7 @@ class HomePage(QWidget):
     open_bookshelf = Signal()
     open_file_dialog = Signal()
     open_settings = Signal()
+    toggle_theme = Signal()
     def __init__(self):
         super().__init__()
         self.setup_ui()
@@ -523,7 +523,7 @@ class HomePage(QWidget):
         layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
         subtitle = QLabel("Un Lecteur de Manga Offline")
         subtitle.setFont(QFont("Inter", 13))
-        subtitle.setStyleSheet(HOME_SUBTITLE_STYLE)
+        subtitle.setStyleSheet(S.HOME_SUBTITLE_STYLE)
         layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Deux entrées : la bibliothèque porte l'accent, le fichier isolé reste sobre.
@@ -532,41 +532,55 @@ class HomePage(QWidget):
         open_btn = QPushButton("OPEN FILE")
         open_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
         open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        open_btn.setStyleSheet(HOME_SECONDARY_BUTTON_STYLE)
+        open_btn.setStyleSheet(S.HOME_SECONDARY_BUTTON_STYLE)
         open_btn.clicked.connect(self.open_file_dialog.emit)
         btn_layout1.addWidget(open_btn)
         bookshelf_btn = QPushButton("BOOKSHELF")
         bookshelf_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
         bookshelf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        bookshelf_btn.setStyleSheet(HOME_PRIMARY_BUTTON_STYLE)
+        bookshelf_btn.setStyleSheet(S.HOME_PRIMARY_BUTTON_STYLE)
         bookshelf_btn.clicked.connect(self.open_bookshelf.emit)
         btn_layout1.addWidget(bookshelf_btn)
 
         # Engrenage : voisin de la bibliothèque, mais sans nom ni couleur pleine
         # pour rester une porte de service à côté des deux entrées principales.
         settings_btn = QPushButton()
-        settings_btn.setIcon(QIcon(resource_path("assets/icons/gear.svg")))
+        settings_btn.setIcon(QIcon(themed_icon("gear")))
         settings_btn.setIconSize(QSize(22, 22))
         settings_btn.setFixedSize(HOME_BUTTON_HEIGHT, HOME_BUTTON_HEIGHT)
         settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        settings_btn.setStyleSheet(HOME_ICON_BUTTON_STYLE)
+        settings_btn.setStyleSheet(S.HOME_ICON_BUTTON_STYLE)
         settings_btn.setToolTip("Paramètres")
         settings_btn.clicked.connect(self.open_settings.emit)
         btn_layout1.addWidget(settings_btn)
+
+        # Bascule clair / sombre : l'icône annonce ce vers quoi elle mène, une
+        # lune tant qu'on est en clair, un soleil une fois passé au sombre.
+        dark = current_theme() == "dark"
+        self.theme_btn = QPushButton()
+        self.theme_btn.setIcon(QIcon(themed_icon("sun" if dark else "moon")))
+        self.theme_btn.setIconSize(QSize(22, 22))
+        self.theme_btn.setFixedSize(HOME_BUTTON_HEIGHT, HOME_BUTTON_HEIGHT)
+        self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_btn.setStyleSheet(S.HOME_ICON_BUTTON_STYLE)
+        self.theme_btn.setToolTip("Revenir au thème clair" if dark
+                                  else "Passer au thème sombre")
+        self.theme_btn.clicked.connect(self.toggle_theme.emit)
+        btn_layout1.addWidget(self.theme_btn)
 
         layout.addLayout(btn_layout1)
 
         bmc_btn = QPushButton('☕ Buy me a coffee')
         bmc_btn.setFixedHeight(HOME_SUPPORT_HEIGHT)
         bmc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        bmc_btn.setStyleSheet(BMC_BUTTON_STYLE)
+        bmc_btn.setStyleSheet(S.BMC_BUTTON_STYLE)
         bmc_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.buymeacoffee.com/ezakaria')))
         layout.addWidget(bmc_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
         paypal_btn = QPushButton('💙 Paypal Me')
         paypal_btn.setFixedHeight(HOME_SUPPORT_HEIGHT)
         paypal_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        paypal_btn.setStyleSheet(PAYPAL_BUTTON_STYLE)
+        paypal_btn.setStyleSheet(S.PAYPAL_BUTTON_STYLE)
         paypal_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://www.paypal.me/ZELORCHE')))
         layout.addWidget(paypal_btn, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
@@ -612,7 +626,7 @@ class ThumbnailWidget(QWidget):
         self.img_label = RoundedLabel()
         self.img_label.setContentsMargins(0, 0, 0, 0)
         self.img_label.setFixedSize(self.thumb_width, self.thumb_height)
-        self.img_label.setStyleSheet(THUMBNAIL_IMAGE_STYLE)
+        self.img_label.setStyleSheet(S.THUMBNAIL_IMAGE_STYLE)
         self.img_label.deferred_load = self.update_image
         self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.img_label, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -633,9 +647,7 @@ class ThumbnailWidget(QWidget):
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.title_label.setWordWrap(True)
             self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
-            self.title_label.setStyleSheet(
-                "font-size: 15px; color: #222; margin: 0px; padding: 0px;"
-            )
+            self.title_label.setStyleSheet(S.THUMBNAIL_TITLE_STYLE)
             info_layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
             info_layout.addStretch(1)
         else:
@@ -643,9 +655,7 @@ class ThumbnailWidget(QWidget):
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.title_label.setWordWrap(True)
             self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
-            self.title_label.setStyleSheet(
-                "font-size: 15px; color: #222; margin: 0px; padding: 0px;"
-            )
+            self.title_label.setStyleSheet(S.THUMBNAIL_TITLE_STYLE)
             info_layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         info_widget.setLayout(info_layout)
         layout.addWidget(info_widget, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -663,7 +673,7 @@ class ThumbnailWidget(QWidget):
             menu_btn = ThumbnailMenuButton(self.img_label)
             menu_btn.setFixedSize(THUMB_MENU_SIZE, THUMB_MENU_SIZE)
             menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            menu_btn.setStyleSheet(THUMBNAIL_MENU_BUTTON_STYLE)
+            menu_btn.setStyleSheet(S.THUMBNAIL_MENU_BUTTON_STYLE)
             inset = THUMB_BORDER_WIDTH + 5
             menu_btn.move(self.thumb_width - THUMB_MENU_SIZE - inset, inset)
             menu_btn.raise_()
@@ -1017,10 +1027,10 @@ class ThumbnailWidget(QWidget):
         except Exception as e:
             print(f"Erreur lors de la mise à jour de la vignette: {e}")
     def enterEvent(self, event):
-        self.img_label.setStyleSheet(THUMBNAIL_IMAGE_HOVER_STYLE)
+        self.img_label.setStyleSheet(S.THUMBNAIL_IMAGE_HOVER_STYLE)
         super().enterEvent(event)
     def leaveEvent(self, event):
-        self.img_label.setStyleSheet(THUMBNAIL_IMAGE_STYLE)
+        self.img_label.setStyleSheet(S.THUMBNAIL_IMAGE_STYLE)
         super().leaveEvent(event)
     def open_in_explorer(self, path):
         from PySide6.QtGui import QDesktopServices
@@ -1045,7 +1055,7 @@ class ResponsiveGridView(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.grid_widget)
-        self.scroll_area.setStyleSheet(SCROLL_AREA_STYLE)
+        self.scroll_area.setStyleSheet(S.SCROLL_AREA_STYLE)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.scroll_area)
@@ -1118,7 +1128,7 @@ class ProgressDialog(QDialog):
                                  PROGRESS_CARD_MARGIN, PROGRESS_CARD_MARGIN + 4)
         card = QWidget()
         card.setObjectName("progressCard")
-        card.setStyleSheet(PROGRESS_CARD_STYLE)
+        card.setStyleSheet(S.PROGRESS_CARD_STYLE)
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(30)
         shadow.setColor(QColor(0, 0, 0, 150))
@@ -1134,10 +1144,10 @@ class ProgressDialog(QDialog):
         head.setSpacing(12)
         self.title_label = QLabel(self.windowTitle())
         self.title_label.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        self.title_label.setStyleSheet(PROGRESS_TITLE_STYLE)
+        self.title_label.setStyleSheet(S.PROGRESS_TITLE_STYLE)
         self.percent_label = QLabel("0 %")
         self.percent_label.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        self.percent_label.setStyleSheet(PROGRESS_PERCENT_STYLE)
+        self.percent_label.setStyleSheet(S.PROGRESS_PERCENT_STYLE)
         head.addWidget(self.title_label)
         head.addStretch()
         head.addWidget(self.percent_label)
@@ -1145,7 +1155,7 @@ class ProgressDialog(QDialog):
 
         self.label = QLabel("Préparation…")
         self.label.setFont(QFont("Inter", 10))
-        self.label.setStyleSheet(PROGRESS_MESSAGE_STYLE)
+        self.label.setStyleSheet(S.PROGRESS_MESSAGE_STYLE)
         layout.addWidget(self.label)
         layout.addSpacing(8)
 
@@ -1153,7 +1163,7 @@ class ProgressDialog(QDialog):
         self.progress.setRange(0, 100)
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(8)
-        self.progress.setStyleSheet(PROGRESS_BAR_STYLE)
+        self.progress.setStyleSheet(S.PROGRESS_BAR_STYLE)
         layout.addWidget(self.progress)
 
         self.setFixedSize(PROGRESS_CARD_WIDTH, self.sizeHint().height())
@@ -1227,10 +1237,10 @@ class BookShelfPage(QWidget):
         title_col.setSpacing(0)
         title = QLabel("BookShelf")
         title.setFont(QFont("Inter", 20, QFont.Weight.Bold))
-        title.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        title.setStyleSheet(S.PAGE_TITLE_STYLE_BOOKSHELF)
         self.count_label = QLabel()
         self.count_label.setFont(QFont("Inter", 9))
-        self.count_label.setStyleSheet(HEADER_SUBTITLE_STYLE)
+        self.count_label.setStyleSheet(S.HEADER_SUBTITLE_STYLE)
         # Hauteur figée sur le texte : sinon la colonne étire les deux labels et
         # rouvre un blanc entre le titre et le compteur.
         for label in (title, self.count_label):
@@ -1259,7 +1269,7 @@ class BookShelfPage(QWidget):
 
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Rechercher une collection")
-        self.search_field.setStyleSheet(HEADER_SEARCH_STYLE)
+        self.search_field.setStyleSheet(S.HEADER_SEARCH_STYLE)
         self.search_field.setFixedHeight(HEADER_BTN_SIZE)
         self.search_field.setFixedWidth(0)
         placeholder = self.search_field.palette()
@@ -1318,7 +1328,7 @@ class BookShelfPage(QWidget):
         add_btn.setIconSize(QSize(18, 18))
         add_btn.setFixedHeight(HEADER_TOOLBAR_HEIGHT)
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setStyleSheet(HEADER_PRIMARY_BUTTON_STYLE)
+        add_btn.setStyleSheet(S.HEADER_PRIMARY_BUTTON_STYLE)
         add_btn.setToolTip("Ajouter un dossier")
         add_btn.clicked.connect(self.add_folder_clicked.emit)
         header.addWidget(add_btn)
@@ -1639,7 +1649,7 @@ def make_toolbar_btn(icon_path, tooltip, callback, checkable=False):
     btn.setFixedSize(HEADER_BTN_SIZE, HEADER_BTN_SIZE)
     btn.setCheckable(checkable)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(HEADER_ICON_BUTTON_STYLE)
+    btn.setStyleSheet(S.HEADER_ICON_BUTTON_STYLE)
     btn.setToolTip(tooltip)
     btn.clicked.connect(callback)
     return btn
@@ -1650,7 +1660,7 @@ def make_back_btn(callback):
     btn = make_toolbar_btn(resource_path("assets/icons/arrow-left-white.png"),
                            "Retour", callback)
     btn.setFixedSize(HEADER_TOOLBAR_HEIGHT, HEADER_TOOLBAR_HEIGHT)
-    btn.setStyleSheet(HEADER_BACK_BUTTON_STYLE)
+    btn.setStyleSheet(S.HEADER_BACK_BUTTON_STYLE)
     return btn
 
 
@@ -1658,7 +1668,7 @@ def make_toolbar_group(*buttons):
     """Pilule translucide qui réunit les actions d'un en-tête."""
     toolbar = QWidget()
     toolbar.setObjectName("headerToolbar")
-    toolbar.setStyleSheet(HEADER_TOOLBAR_STYLE)
+    toolbar.setStyleSheet(S.HEADER_TOOLBAR_STYLE)
     toolbar.setFixedHeight(HEADER_TOOLBAR_HEIGHT)
     # Sans taille fixe, la pilule absorbe l'espace libre et les icônes se dispersent.
     toolbar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1764,7 +1774,7 @@ class FolderViewPage(QWidget):
         self.anilist_desc_label.setOpenExternalLinks(True)
         self.anilist_desc_label.setWordWrap(True)
         self.anilist_desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.anilist_desc_label.setStyleSheet("font-size: 15px; color: #444; margin-top: 10px;")
+        self.anilist_desc_label.setStyleSheet(S.FOLDER_DESC_STYLE)
         self.anilist_desc_label.setMaximumWidth(400)
         left_col.addWidget(self.anilist_desc_label, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
 
@@ -1856,10 +1866,7 @@ class FolderViewPage(QWidget):
                 item.widget().setParent(None)
         for tag in tags_list:
             tag_label = QLabel(tag)
-            tag_label.setStyleSheet(
-                "background: #e6dca4; color: #444; border-radius: 12px; padding: 4px 14px; "
-                "font-size: 13px; font-weight: bold; margin-bottom: 2px;"
-            )
+            tag_label.setStyleSheet(S.FOLDER_TAG_STYLE)
             self.anilist_tags_layout.addWidget(tag_label)
         self.refresh_view()
 
@@ -1871,8 +1878,8 @@ class FolderViewPage(QWidget):
             if os.path.exists(banner_path):
                 debug(f"[AniList] Bannière trouvée : {banner_path}")
                 self.header_widget.set_background_image(banner_path)
-                self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
-                self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
+                self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
+                self.path_label.setStyleSheet(S.FOLDER_PATH_STYLE)
                 return
             # 2. Chercher une couverture AniList dans .anilist.json (fallback)
             anilist_file = os.path.join(self.folder_path, '.anilist.json')
@@ -1889,8 +1896,8 @@ class FolderViewPage(QWidget):
                         if os.path.exists(anilist_cover_path):
                             print(f"[AniList] Couverture trouvée : {anilist_cover_path}")
                             self.header_widget.set_background_image(anilist_cover_path)
-                            self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
-                            self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
+                            self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
+                            self.path_label.setStyleSheet(S.FOLDER_PATH_STYLE)
                             return
                 except Exception as e:
                     print(f"[AniList] Erreur lecture couverture : {e}")
@@ -1901,20 +1908,20 @@ class FolderViewPage(QWidget):
                 print(f"Image personnalisée trouvée: {custom_bg_path}")
                 self.header_widget.set_background_image(custom_bg_path)
                 print("Image personnalisée appliquée au header")
-                self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
-                self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
+                self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
+                self.path_label.setStyleSheet(S.FOLDER_PATH_STYLE)
             else:
                 print(f"Image personnalisée non trouvée, utilisation de l'image par défaut")
                 default_bg_path = "assets/images/header.png"
                 if os.path.exists(default_bg_path):
                     self.header_widget.set_background_image(default_bg_path)
                     debug("Image par défaut appliquée au header")
-                    self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
-                    self.path_label.setStyleSheet(FOLDER_PATH_STYLE)
+                    self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
+                    self.path_label.setStyleSheet(S.FOLDER_PATH_STYLE)
                 else:
                     print(f"Image par défaut non trouvée, utilisation du style par défaut (pas d'image)")
                     self.header_widget.set_background_image(None)
-                    self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
+                    self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
                     self.path_label.setStyleSheet("""
                         color: #666;
                         background: transparent;
@@ -1927,7 +1934,7 @@ class FolderViewPage(QWidget):
         except Exception as e:
             print(f"Erreur lors du chargement de l'image de fond du header: {e}")
             self.header_widget.set_background_image(None)
-            self.title_label.setStyleSheet(PAGE_TITLE_STYLE)
+            self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE)
             self.path_label.setStyleSheet("""
                 color: #666;
                 background: transparent;
@@ -2210,7 +2217,7 @@ class PageView(QScrollArea):
         # La bordure vient de la feuille de style : elle remplace le cadre par
         # defaut, qui detonnait avec les coins arrondis de la barre.
         self.setObjectName("readerView")
-        self.setStyleSheet(READER_VIEW_STYLE)
+        self.setStyleSheet(S.READER_VIEW_STYLE)
         # Le clic ne doit pas voler le focus clavier à la page du lecteur.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         for bar in (self.horizontalScrollBar(), self.verticalScrollBar()):
@@ -2271,11 +2278,11 @@ class PageView(QScrollArea):
 def make_reader_btn(icon_name, tooltip, callback):
     """Bouton icône de la barre du lecteur : plat, l'accent ne sort qu'au survol."""
     btn = QPushButton()
-    btn.setIcon(QIcon(resource_path(f"assets/icons/{icon_name}.svg")))
+    btn.setIcon(QIcon(themed_icon(icon_name)))
     btn.setIconSize(QSize(17, 17))
     btn.setFixedSize(READER_BTN_SIZE, READER_BTN_SIZE)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(READER_ICON_BUTTON_STYLE)
+    btn.setStyleSheet(S.READER_ICON_BUTTON_STYLE)
     btn.setToolTip(tooltip)
     btn.clicked.connect(callback)
     return btn
@@ -2285,7 +2292,7 @@ def make_reader_group(*widgets):
     """Pilule claire qui réunit une famille d'actions du lecteur."""
     group = QWidget()
     group.setObjectName("readerGroup")
-    group.setStyleSheet(READER_GROUP_STYLE)
+    group.setStyleSheet(S.READER_GROUP_STYLE)
     group.setFixedHeight(READER_GROUP_HEIGHT)
     row = QHBoxLayout(group)
     row.setContentsMargins(4, 0, 4, 0)
@@ -2332,16 +2339,16 @@ class FileViewerPage(QWidget):
         # c'est le seul endroit où on peut les apprendre.
         bar = QWidget()
         bar.setObjectName("readerBar")
-        bar.setStyleSheet(READER_BAR_STYLE)
+        bar.setStyleSheet(S.READER_BAR_STYLE)
         bar.setFixedHeight(READER_BAR_HEIGHT)
         nav_layout = QHBoxLayout(bar)
         nav_layout.setContentsMargins(10, 0, 10, 0)
         nav_layout.setSpacing(10)
 
-        self.back_btn = make_reader_btn("arrow-left", "Retour (Échap)",
+        self.back_btn = make_reader_btn("arrow-back", "Retour (Échap)",
                                         self.back_clicked.emit)
         self.back_btn.setFixedSize(READER_GROUP_HEIGHT, READER_GROUP_HEIGHT)
-        self.back_btn.setStyleSheet(READER_BACK_BUTTON_STYLE)
+        self.back_btn.setStyleSheet(S.READER_BACK_BUTTON_STYLE)
         self.back_btn.setIconSize(QSize(19, 19))
 
         self.prev_btn = make_reader_btn("chevron-left", "Page précédente (←)",
@@ -2349,7 +2356,7 @@ class FileViewerPage(QWidget):
         self.next_btn = make_reader_btn("chevron-right", "Page suivante (→)",
                                         self.next_page)
         self.page_label = QLabel()
-        self.page_label.setStyleSheet(READER_PAGE_LABEL_STYLE)
+        self.page_label.setStyleSheet(S.READER_PAGE_LABEL_STYLE)
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Largeur figée sur le pire des cas : sans cela la pilule se dilaterait
         # au passage de 9 à 10, puis de 99 à 100.
@@ -2363,7 +2370,7 @@ class FileViewerPage(QWidget):
         self.zoom_label.setFixedHeight(30)
         self.zoom_label.setMinimumWidth(58)
         self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.zoom_label.setStyleSheet(READER_ZOOM_LABEL_STYLE)
+        self.zoom_label.setStyleSheet(S.READER_ZOOM_LABEL_STYLE)
         self.zoom_label.setToolTip("Ajuster la page à la fenêtre")
         self.zoom_label.clicked.connect(self.fit_to_window)
 
@@ -2543,7 +2550,7 @@ class FileViewerPage(QWidget):
         # chiffre que l'oeil vient chercher.
         self.page_label.setText(
             f'<span style="font-weight:bold;">{page}</span>'
-            f'<span style="color:#8b94a3;"> / {total}</span>')
+            f'<span style="color:{theme_color("text_soft")};"> / {total}</span>')
         self.zoom_label.setText(f"{round(self.zoom_factor * 100)} %")
         self.prev_btn.setEnabled(self.current_page > 0)
         self.next_btn.setEnabled(self.current_page < self.total_pages - 1)
@@ -2688,7 +2695,7 @@ class MangaChaptersPage(QWidget):
         # Titre du manga
         self.title_label = QLabel()
         self.title_label.setFont(QFont("Inter", 24, QFont.Weight.Bold))
-        self.title_label.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE_BOOKSHELF)
         header.addWidget(self.title_label)
         header.addStretch()
 
@@ -2781,7 +2788,7 @@ class ChapterDownloadPage(QWidget):
         # Titre
         self.title_label = QLabel()
         self.title_label.setFont(QFont("Inter", 24, QFont.Weight.Bold))
-        self.title_label.setStyleSheet(PAGE_TITLE_STYLE_BOOKSHELF)
+        self.title_label.setStyleSheet(S.PAGE_TITLE_STYLE_BOOKSHELF)
         header.addWidget(self.title_label)
         header.addStretch()
 
@@ -2899,35 +2906,41 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PAKU - Manga PDF Reader")
         self.setGeometry(100, 100, 1400, 900)
-        self.setStyleSheet("background-color: #f6fafd;")
+        self.setStyleSheet(S.APP_BACKGROUND_STYLE)
         self.setWindowIcon(QIcon(resource_path("assets/images/logo.png")))
 
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
 
-        self.home_page = HomePage()
-        self.bookshelf_page = BookShelfPage()
-        self.folder_view_page = FolderViewPage()
-        self.pdf_viewer_page = FileViewerPage()
-
-        self.stacked_widget.addWidget(self.home_page)
-        self.stacked_widget.addWidget(self.bookshelf_page)
-        self.stacked_widget.addWidget(self.folder_view_page)
-        self.stacked_widget.addWidget(self.pdf_viewer_page)
-
         self.settings_window = None
-
-        self.connect_signals()
+        self.build_pages()
         # Page d'ouverture choisie dans les paramètres.
         if settings.get("startup_page") == "bookshelf":
             self.show_bookshelf()
         else:
             self.show_home()
 
+    def build_pages(self):
+        """(Re)construit les quatre pages et rebranche leurs signaux.
+
+        Les feuilles de style sont posées sur les widgets à leur construction :
+        changer de thème passe donc par une reconstruction, pas par une simple
+        mise à jour des couleurs.
+        """
+        self.home_page = HomePage()
+        self.bookshelf_page = BookShelfPage()
+        self.folder_view_page = FolderViewPage()
+        self.pdf_viewer_page = FileViewerPage()
+        for page in (self.home_page, self.bookshelf_page,
+                     self.folder_view_page, self.pdf_viewer_page):
+            self.stacked_widget.addWidget(page)
+        self.connect_signals()
+
     def connect_signals(self):
         self.home_page.open_bookshelf.connect(self.show_bookshelf)
         self.home_page.open_file_dialog.connect(self.open_file)
         self.home_page.open_settings.connect(self.show_settings)
+        self.home_page.toggle_theme.connect(self.toggle_theme)
 
         self.bookshelf_page.folder_selected.connect(self.show_folder_view)
         self.bookshelf_page.add_folder_clicked.connect(self.open_directory)
@@ -2981,6 +2994,74 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Choisir un dossier")
         self.bookshelf_page.add_folder(folder)
 
+    def toggle_theme(self):
+        """Bouton lune / soleil : bascule le thème et le retient."""
+        new_theme = "light" if current_theme() == "dark" else "dark"
+        settings.set("theme", new_theme)
+        self.apply_theme()
+
+    def apply_theme(self):
+        """Applique le thème enregistré, en gardant l'utilisateur où il est."""
+        set_theme(settings.get("theme"))
+        apply_qt_palette(QApplication.instance())
+        self.setStyleSheet(S.APP_BACKGROUND_STYLE)
+
+        state = self.capture_state()
+        old_pages = (self.home_page, self.bookshelf_page,
+                     self.folder_view_page, self.pdf_viewer_page)
+        self.build_pages()
+        for page in old_pages:
+            self.stacked_widget.removeWidget(page)
+            page.deleteLater()
+        self.restore_state(state)
+
+        # La fenêtre de paramètres porte ses propres feuilles : elle se
+        # reconstruit aussi, et se rouvre si elle était affichée.
+        if self.settings_window is not None:
+            was_visible = self.settings_window.isVisible()
+            self.settings_window.close()
+            self.settings_window.deleteLater()
+            self.settings_window = None
+            if was_visible:
+                self.show_settings()
+
+    def capture_state(self):
+        """Ce qu'il faut savoir pour remettre l'utilisateur là où il était."""
+        current = self.stacked_widget.currentWidget()
+        viewer = self.pdf_viewer_page
+        return {
+            "page": ("viewer" if current is self.pdf_viewer_page else
+                     "folder" if current is self.folder_view_page else
+                     "bookshelf" if current is self.bookshelf_page else "home"),
+            "folder_path": self.folder_view_page.folder_path,
+            "path_stack": list(self.folder_view_page.path_stack),
+            "hidden": set(self.folder_view_page.session_hidden_files),
+            "file_path": viewer.file_path,
+            "current_page": viewer.current_page,
+            "zoom_factor": viewer.zoom_factor,
+            "zoom_is_auto": viewer.zoom_is_auto,
+        }
+
+    def restore_state(self, state):
+        folder = self.folder_view_page
+        if state["folder_path"]:
+            folder.session_hidden_files = state["hidden"]
+            folder.set_folder(state["folder_path"], is_main_entry=True)
+            folder.path_stack = state["path_stack"] or [state["folder_path"]]
+        if state["page"] == "viewer" and state["file_path"]:
+            viewer = self.pdf_viewer_page
+            viewer.load_file(state["file_path"])
+            viewer.zoom_factor = state["zoom_factor"]
+            viewer.zoom_is_auto = state["zoom_is_auto"]
+            viewer.display_page(state["current_page"])
+            self.stacked_widget.setCurrentWidget(viewer)
+        elif state["page"] == "folder" and state["folder_path"]:
+            self.stacked_widget.setCurrentWidget(folder)
+        elif state["page"] == "bookshelf":
+            self.show_bookshelf()
+        else:
+            self.show_home()
+
     def show_settings(self):
         """Ouvre la fenêtre de paramètres, une seule instance réutilisée."""
         if self.settings_window is None:
@@ -2999,6 +3080,11 @@ class MainWindow(QMainWindow):
         rien à faire ici : seuls ceux qui vivent dans des widgets déjà en place
         demandent une reconstruction.
         """
+        if key in ("*", "theme"):
+            # La bascule reconstruit les pages, y compris celle qui vient
+            # d'émettre : on laisse d'abord le signal se dérouler.
+            QTimer.singleShot(0, self.apply_theme)
+            return
         rebuild = key in ("*", "thumbnail_size", "hide_extensions",
                           "thumbnail_cache_cleared")
         if key in ("*", "default_sort"):
@@ -3307,6 +3393,43 @@ def refresh_manga_info(folder_path, title, language=None):
     return info
 
 
+def apply_qt_palette(app):
+    """Teinte les fenêtres que Qt dessine lui-même.
+
+    Les boîtes de dialogue, les menus des vignettes et la liste déroulante d'un
+    QComboBox ne passent pas par nos feuilles de style : sans palette, elles
+    resteraient blanches au milieu d'une application sombre.
+    """
+    if app is None:
+        return
+    palette = QPalette()
+    if current_theme() == "dark":
+        base = QColor(theme_color("surface"))
+        alt = QColor(theme_color("surface_alt"))
+        text = QColor(theme_color("text"))
+        window = QColor(theme_color("bg"))
+        for role, color in (
+            (QPalette.ColorRole.Window, window),
+            (QPalette.ColorRole.WindowText, text),
+            (QPalette.ColorRole.Base, base),
+            (QPalette.ColorRole.AlternateBase, alt),
+            (QPalette.ColorRole.Text, text),
+            (QPalette.ColorRole.Button, alt),
+            (QPalette.ColorRole.ButtonText, text),
+            (QPalette.ColorRole.ToolTipBase, base),
+            (QPalette.ColorRole.ToolTipText, text),
+            (QPalette.ColorRole.Highlight, QColor(ACCENT)),
+            (QPalette.ColorRole.HighlightedText, QColor("#ffffff")),
+            (QPalette.ColorRole.PlaceholderText, QColor(theme_color("text_muted"))),
+        ):
+            palette.setColor(role, color)
+        disabled = QColor(theme_color("text_soft"))
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText,
+                     QPalette.ColorRole.WindowText):
+            palette.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+    app.setPalette(palette)
+
+
 def main():
     # Certains chemins de la bibliothèque sortent du codepage de la console
     # (arabe, japonais) : sans cela, un simple print fait planter l'application.
@@ -3326,6 +3449,9 @@ def main():
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
         app.setFont(QFont("Inter"))
+    # Thème enregistré, posé avant la construction de la moindre page.
+    set_theme(settings.get("theme"))
+    apply_qt_palette(app)
     window = MainWindow()
     if settings.get("start_fullscreen"):
         window.showFullScreen()

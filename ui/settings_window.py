@@ -24,15 +24,7 @@ from PySide6.QtWidgets import (QAbstractButton, QComboBox, QDialog, QFrame,
                                QVBoxLayout, QWidget)
 
 from app_settings import THUMBNAIL_SIZES, settings
-from styles.styles import (SCROLL_AREA_STYLE, SETTINGS_ACTION_BUTTON_STYLE,
-                           SETTINGS_COMBO_STYLE, SETTINGS_LINK_BUTTON_STYLE,
-                           SETTINGS_PRIMARY_BUTTON_STYLE, SETTINGS_ROW_DESC_STYLE,
-                           SETTINGS_ROW_LABEL_STYLE, SETTINGS_ROW_STYLE,
-                           SETTINGS_SECTION_BAR_STYLE, SETTINGS_SECTION_TITLE_STYLE,
-                           SETTINGS_SLIDER_STYLE, SETTINGS_SUBTITLE_STYLE,
-                           SETTINGS_SWITCH_COLORS, SETTINGS_TAB_BUTTON_STYLE,
-                           SETTINGS_TITLE_STYLE, SETTINGS_VALUE_STYLE,
-                           SETTINGS_WINDOW_STYLE)
+from styles.styles import S
 
 THUMB_CACHE_DIRNAME = ".thumbnails"
 
@@ -93,14 +85,14 @@ class ToggleSwitch(QAbstractButton):
         else:
             key = "track_off_hover" if hovered else "track_off"
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(SETTINGS_SWITCH_COLORS[key]))
+        painter.setBrush(QColor(S.SETTINGS_SWITCH_COLORS[key]))
         radius = self.TRACK_HEIGHT / 2
         painter.drawRoundedRect(QRectF(self.rect()), radius, radius)
 
         diameter = self.TRACK_HEIGHT - 2 * self.KNOB_MARGIN
         travel = self.TRACK_WIDTH - 2 * self.KNOB_MARGIN - diameter
         x = self.KNOB_MARGIN + travel * self._offset
-        painter.setBrush(QColor(SETTINGS_SWITCH_COLORS["knob"]))
+        painter.setBrush(QColor(S.SETTINGS_SWITCH_COLORS["knob"]))
         painter.drawEllipse(QRectF(x, self.KNOB_MARGIN, diameter, diameter))
 
 
@@ -120,7 +112,7 @@ class SettingsWindow(QDialog):
         # Rechargeurs appelés après une réinitialisation, un par contrôle.
         self._reloaders = []
         self.setWindowTitle("PAKU - Paramètres")
-        self.setStyleSheet(SETTINGS_WINDOW_STYLE)
+        self.setStyleSheet(S.SETTINGS_WINDOW_STYLE)
         self.setMinimumSize(720, 560)
         self.resize(820, 640)
         self.setup_ui()
@@ -132,11 +124,11 @@ class SettingsWindow(QDialog):
         layout.setSpacing(0)
 
         title = QLabel("Paramètres")
-        title.setStyleSheet(SETTINGS_TITLE_STYLE)
+        title.setStyleSheet(S.SETTINGS_TITLE_STYLE)
         layout.addWidget(title)
 
         subtitle = QLabel("Réglez le comportement de PAKU. Tout est enregistré à la volée.")
-        subtitle.setStyleSheet(SETTINGS_SUBTITLE_STYLE)
+        subtitle.setStyleSheet(S.SETTINGS_SUBTITLE_STYLE)
         layout.addWidget(subtitle)
         layout.addSpacing(18)
 
@@ -149,7 +141,7 @@ class SettingsWindow(QDialog):
             button = QPushButton(name)
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setStyleSheet(SETTINGS_TAB_BUTTON_STYLE)
+            button.setStyleSheet(S.SETTINGS_TAB_BUTTON_STYLE)
             # L'onglet actif passe en gras : sans cette reserve, le libelle
             # serait rogne au moment de la selection.
             bold = QFont(button.font())
@@ -164,7 +156,7 @@ class SettingsWindow(QDialog):
 
         rule = QFrame()
         rule.setFixedHeight(1)
-        rule.setStyleSheet("background: #e6e9ee; border: none;")
+        rule.setStyleSheet(S.SETTINGS_RULE_STYLE)
         layout.addWidget(rule)
         layout.addSpacing(14)
 
@@ -178,14 +170,14 @@ class SettingsWindow(QDialog):
         footer.setContentsMargins(0, 0, 0, 0)
         reset_btn = QPushButton("Réinitialiser les réglages")
         reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        reset_btn.setStyleSheet(SETTINGS_LINK_BUTTON_STYLE)
+        reset_btn.setStyleSheet(S.SETTINGS_LINK_BUTTON_STYLE)
         reset_btn.clicked.connect(self.reset_settings)
         footer.addWidget(reset_btn)
         footer.addStretch()
         close_btn = QPushButton("Fermer")
         close_btn.setFixedHeight(36)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet(SETTINGS_PRIMARY_BUTTON_STYLE)
+        close_btn.setStyleSheet(S.SETTINGS_PRIMARY_BUTTON_STYLE)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn)
         layout.addLayout(footer)
@@ -193,7 +185,7 @@ class SettingsWindow(QDialog):
     def wrap_in_scroll(self, content):
         area = QScrollArea()
         area.setWidgetResizable(True)
-        area.setStyleSheet(SCROLL_AREA_STYLE)
+        area.setStyleSheet(S.SCROLL_AREA_STYLE)
         area.setFrameShape(QFrame.Shape.NoFrame)
         content.setObjectName("settingsBody")
         area.setWidget(content)
@@ -223,10 +215,10 @@ class SettingsWindow(QDialog):
         row.setSpacing(10)
         bar = QFrame()
         bar.setFixedSize(4, 18)
-        bar.setStyleSheet(SETTINGS_SECTION_BAR_STYLE)
+        bar.setStyleSheet(S.SETTINGS_SECTION_BAR_STYLE)
         row.addWidget(bar)
         label = QLabel(title)
-        label.setStyleSheet(SETTINGS_SECTION_TITLE_STYLE)
+        label.setStyleSheet(S.SETTINGS_SECTION_TITLE_STYLE)
         row.addWidget(label)
         row.addStretch()
         layout.addWidget(holder)
@@ -236,7 +228,7 @@ class SettingsWindow(QDialog):
         """Carte blanche : libellé et explication à gauche, contrôle à droite."""
         card = QWidget()
         card.setObjectName("settingsRow")
-        card.setStyleSheet(SETTINGS_ROW_STYLE)
+        card.setStyleSheet(S.SETTINGS_ROW_STYLE)
         box = QHBoxLayout(card)
         box.setContentsMargins(16, 12, 16, 12)
         box.setSpacing(16)
@@ -244,12 +236,12 @@ class SettingsWindow(QDialog):
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(2)
         label = QLabel(title)
-        label.setStyleSheet(SETTINGS_ROW_LABEL_STYLE)
+        label.setStyleSheet(S.SETTINGS_ROW_LABEL_STYLE)
         text.addWidget(label)
         if description:
             hint = QLabel(description)
             hint.setWordWrap(True)
-            hint.setStyleSheet(SETTINGS_ROW_DESC_STYLE)
+            hint.setStyleSheet(S.SETTINGS_ROW_DESC_STYLE)
             text.addWidget(hint)
         box.addLayout(text, 1)
         layout.addWidget(card)
@@ -260,7 +252,7 @@ class SettingsWindow(QDialog):
                    on_text="Activé", off_text="Désactivé"):
         box = self.row(layout, title, description)
         state = QLabel()
-        state.setStyleSheet(SETTINGS_VALUE_STYLE)
+        state.setStyleSheet(S.SETTINGS_VALUE_STYLE)
         state.setMinimumWidth(88)
         switch = ToggleSwitch()
 
@@ -293,7 +285,7 @@ class SettingsWindow(QDialog):
         box = self.row(layout, title, description)
         combo = QComboBox()
         combo.setCursor(Qt.CursorShape.PointingHandCursor)
-        combo.setStyleSheet(SETTINGS_COMBO_STYLE)
+        combo.setStyleSheet(S.SETTINGS_COMBO_STYLE)
         combo.setMinimumWidth(190)
         for value, label in options:
             combo.addItem(label, value)
@@ -321,11 +313,11 @@ class SettingsWindow(QDialog):
     def add_slider(self, layout, key, title, description, minimum, maximum, suffix=""):
         box = self.row(layout, title, description)
         slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setStyleSheet(SETTINGS_SLIDER_STYLE)
+        slider.setStyleSheet(S.SETTINGS_SLIDER_STYLE)
         slider.setRange(minimum, maximum)
         slider.setFixedWidth(190)
         value_label = QLabel()
-        value_label.setStyleSheet(SETTINGS_VALUE_STYLE)
+        value_label.setStyleSheet(S.SETTINGS_VALUE_STYLE)
         value_label.setMinimumWidth(52)
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
@@ -354,7 +346,7 @@ class SettingsWindow(QDialog):
         button = QPushButton(button_text)
         button.setFixedHeight(32)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setStyleSheet(SETTINGS_ACTION_BUTTON_STYLE)
+        button.setStyleSheet(S.SETTINGS_ACTION_BUTTON_STYLE)
         button.clicked.connect(callback)
         box.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
         return button
@@ -362,6 +354,11 @@ class SettingsWindow(QDialog):
     # -- pages ------------------------------------------------------------
     def build_general(self):
         page, layout = self.new_page()
+        self.section(layout, "Apparence")
+        self.add_combo(layout, "theme", "Thème",
+                       "Le même réglage que le bouton lune de la page d'accueil.",
+                       [("light", "Clair"), ("dark", "Sombre")])
+
         self.section(layout, "Démarrage")
         self.add_combo(layout, "startup_page", "Page d'ouverture",
                        "Écran affiché au lancement de l'application.",
