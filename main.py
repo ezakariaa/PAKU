@@ -2,10 +2,45 @@ import sys
 import os
 import json
 import functools
+import importlib
 import zipfile
-import pymupdf as fitz  # l'alias historique `fitz` est déprécié depuis PyMuPDF 1.26
-import rarfile
-import requests
+from typing import TYPE_CHECKING
+
+
+class LazyModule:
+    """Module chargé à son premier usage.
+
+    PyMuPDF, requests et rarfile pèsent à eux trois l'essentiel du temps passé
+    avant que la fenêtre n'apparaisse, alors qu'aucun n'est nécessaire pour
+    l'afficher : le premier n'arrive qu'à l'ouverture d'un PDF, le deuxième au
+    premier appel réseau, le troisième à la première archive RAR.
+    """
+
+    def __init__(self, name):
+        # Rangés directement dans __dict__ : sinon __getattr__ les chercherait
+        # dans le module, qui n'est pas encore chargé.
+        self.__dict__["_name"] = name
+        self.__dict__["_module"] = None
+
+    def __getattr__(self, attribute):
+        module = self.__dict__["_module"]
+        if module is None:
+            module = importlib.import_module(self.__dict__["_name"])
+            self.__dict__["_module"] = module
+        return getattr(module, attribute)
+
+
+# Jamais exécuté : ces trois lignes ne sont là que pour que l'analyse statique
+# de PyInstaller voie les modules et les embarque dans l'exécutable.
+if TYPE_CHECKING:
+    import pymupdf as fitz
+    import rarfile
+    import requests
+
+# L'alias historique `fitz` est déprécié depuis PyMuPDF 1.26.
+fitz = LazyModule("pymupdf")
+rarfile = LazyModule("rarfile")
+requests = LazyModule("requests")
 
 # === AJOUT : Fonction utilitaire pour les chemins d'assets compatible PyInstaller ===
 # Traces de mise au point : muettes par défaut. Elles représentent une centaine
@@ -39,7 +74,7 @@ def resource_path(relative_path):
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy,
     QPushButton, QLabel, QStackedWidget, QGridLayout, QScrollArea,
-    QFileDialog, QMenu, QInputDialog, QDialog, QProgressBar, QMessageBox,
+    QFileDialog, QMenu, QDialog, QProgressBar, QMessageBox,
     QGraphicsDropShadowEffect, QLineEdit
 )
 from PySide6.QtGui import (
@@ -50,7 +85,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import (Qt, Signal, QSize, QTimer, QUrl, QRect, QRectF, QPoint, QPointF,
                             QPropertyAnimation, QEasingCurve)  # imports nettoyés
-from PySide6.QtSvg import QSvgRenderer
 
 # Importer les styles
 from styles.styles import (
@@ -63,6 +97,8 @@ from ui.flowlayout import FlowLayout
 # Réglages système : lus partout, écrits par la fenêtre de paramètres.
 from app_settings import settings
 from ui.settings_window import SettingsWindow
+# Langue d'affichage : le code est écrit en français, tr() traduit.
+from i18n import tr, set_language
 
 LIBRARY_FILE = "library.json"
 GENERATE_THUMBNAILS = True
@@ -108,12 +144,23 @@ LANGUAGES = (
 )
 LANGUAGE_LABELS = dict(LANGUAGES)
 LANGUAGE_FILE = ".languages.json"
+SUBTITLE_FILE = ".subtitles.json"
+STATUS_FILE = ".status.json"
+# --- Statuts d'avancement ---
+# Le code est rangé, le libellé est traduit à l'affichage.
+STATUSES = (
+    ("ongoing", "En cours"),
+    ("finished", "Terminé"),
+)
+STATUS_LABELS = dict(STATUSES)
+# Préférences d'affichage du dossier lui-même, et non de ce qu'il contient.
+FOLDER_PREFS_FILE = ".paku.json"
 THUMB_FLAG_HEIGHT = 21
 
 THUMB_MENU_SIZE = 28          # pastille ⋯ dans le coin de la pochette
 # Marge laissée autour d'une pochette pour que son ombre portée ait la place de
 # s'étaler : gauche, haut, droite, bas. L'ombre descend, d'où le bas plus large.
-THUMB_SHADOW_MARGINS = (12, 6, 18, 22)
+THUMB_SHADOW_MARGINS = (17, 8, 17, 26)
 # L'espacement de la grille vient en plus de ces marges.
 GRID_SPACING = 8
 # Les vignettes sont mises en cache à 3x la taille d'affichage : de quoi rester nettes
@@ -123,6 +170,9 @@ THUMB_CACHE_SIZE = (THUMB_DISPLAY_SIZE[0] * 3, THUMB_DISPLAY_SIZE[1] * 3)
 LEGACY_THUMB_SIZE = (THUMB_DISPLAY_SIZE[0] * 2, THUMB_DISPLAY_SIZE[1] * 2)
 # À incrémenter dès que le rendu change, pour réinvalider les vignettes en cache.
 THUMB_CACHE_VERSION = "2"
+
+# Largeur maximale de la colonne synopsis + tags, dans la vue dossier.
+FOLDER_INFO_WIDTH = 420
 
 # --- Barre d'en-tête de la bibliothèque ---
 HEADER_HEIGHT = 84
@@ -301,6 +351,95 @@ def save_item_language(item_path, code):
         print(f"Erreur lors de l'enregistrement de la langue : {e}")
 
 
+def load_status_map(folder):
+    """Statut choisi pour chaque élément d'un dossier."""
+    try:
+        with open(os.path.join(folder, STATUS_FILE), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_item_status(item_path, code):
+    """Écrit le statut d'un élément dans le .status.json de son dossier parent."""
+    folder = os.path.dirname(item_path)
+    statuses = load_status_map(folder)
+    name = os.path.basename(item_path)
+    if code:
+        statuses[name] = code
+    else:
+        statuses.pop(name, None)
+    try:
+        with open(os.path.join(folder, STATUS_FILE), 'w', encoding='utf-8') as f:
+            json.dump(statuses, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"Erreur lors de l'enregistrement du statut : {e}")
+
+
+def load_folder_prefs(folder):
+    """Préférences d'affichage propres à un dossier.
+
+    Les autres fichiers cachés décrivent le *contenu* d'un dossier, indexé par
+    nom ; celui-ci décrit le dossier lui-même, d'où un fichier à part.
+    """
+    try:
+        with open(os.path.join(folder, FOLDER_PREFS_FILE), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_folder_pref(folder, key, value):
+    """Écrit une préférence de dossier. Une valeur fausse retire la clé."""
+    prefs = load_folder_prefs(folder)
+    if value:
+        prefs[key] = value
+    else:
+        prefs.pop(key, None)
+    try:
+        path = os.path.join(folder, FOLDER_PREFS_FILE)
+        if prefs:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(prefs, f, ensure_ascii=False, indent=2)
+        elif os.path.exists(path):
+            # Plus rien à retenir : on ne laisse pas un fichier vide derrière.
+            os.remove(path)
+    except OSError as e:
+        print(f"Erreur lors de l'enregistrement des préférences du dossier : {e}")
+
+
+def load_subtitle_map(folder):
+    """Sous-titre choisi pour chaque élément d'un dossier."""
+    try:
+        with open(os.path.join(folder, SUBTITLE_FILE), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_item_subtitle(item_path, text):
+    """Écrit le sous-titre d'un élément dans le .subtitles.json de son dossier.
+
+    Même convention que le .alias.json des renommages : un texte vide efface
+    l'entrée plutôt que d'en garder une vide.
+    """
+    folder = os.path.dirname(item_path)
+    subtitles = load_subtitle_map(folder)
+    name = os.path.basename(item_path)
+    if text:
+        subtitles[name] = text
+    else:
+        subtitles.pop(name, None)
+    try:
+        with open(os.path.join(folder, SUBTITLE_FILE), 'w', encoding='utf-8') as f:
+            json.dump(subtitles, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"Erreur lors de l'enregistrement du sous-titre : {e}")
+
+
 def load_thumb_cache_index(thumb_dir):
     """Version du rendu ayant produit chaque vignette auto-générée du dossier.
 
@@ -401,7 +540,7 @@ class FlagBadge(QLabel):
         super().__init__(parent)
         self.code = code
         self.setFixedSize(round(height * 3 / 2), height)
-        self.setToolTip(LANGUAGE_LABELS.get(code, code))
+        self.setToolTip(tr(LANGUAGE_LABELS.get(code, code)))
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         # THUMBNAIL_IMAGE_STYLE est posé sur la pochette sans sélecteur : Qt le
         # propage aux enfants. Sans cette remise à zéro, le drapeau héritait du
@@ -421,12 +560,96 @@ class FlagBadge(QLabel):
         shape = QPainterPath()
         shape.addRoundedRect(QRectF(0, 0, w, h), 2 * ratio, 2 * ratio)
         painter.setClipPath(shape)
+        # Importé ici : le module QtSvg coûte un quart de seconde au démarrage
+        # pour un dessin que seules les vignettes à drapeau réclament.
+        from PySide6.QtSvg import QSvgRenderer
         renderer = QSvgRenderer(resource_path(f"assets/icons/flags/{self.code}.svg"))
         if renderer.isValid():
             renderer.render(painter, QRectF(0, 0, w, h))
         else:
             painter.fillRect(QRectF(0, 0, w, h), QColor("#4a5160"))
         painter.end()
+        pixmap = QPixmap.fromImage(canvas)
+        pixmap.setDevicePixelRatio(ratio)
+        self.setPixmap(pixmap)
+
+
+def make_thumbnail_menu(parent=None):
+    """Menu de la pastille ⋯, aux couleurs du thème.
+
+    Le fond translucide et l'absence de cadre système sont ce qui permet aux
+    coins arrondis de la feuille de style de se découper proprement : sans eux,
+    Windows dessine un rectangle blanc derrière la carte.
+    """
+    menu = QMenu(parent)
+    menu.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+    menu.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    menu.setStyleSheet(S.THUMBNAIL_MENU_STYLE)
+    return menu
+
+
+def menu_action(menu, label, icon_name, callback):
+    """Entrée de menu : libellé, icône du thème, action."""
+    action = menu.addAction(QIcon(themed_icon(icon_name)), label)
+    action.triggered.connect(callback)
+    return action
+
+
+class StatusBadge(QLabel):
+    """Statut d'avancement, posé au-dessus du nombre de chapitres.
+
+    Même pastille que le compteur, mais la couleur y porte le sens : bleu tant
+    que la collection avance, vert une fois terminée.
+    """
+
+    def __init__(self, code, height=THUMB_FLAG_HEIGHT, parent=None):
+        super().__init__(parent)
+        self.code = code
+        self.label = tr(STATUS_LABELS.get(code, code))
+        self.setFixedSize(self._text_width(height), height)
+        self.setToolTip(self.label)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent; border: none;")
+        self._render()
+
+    def _font(self, height):
+        return QFont("Inter", max(7, round(height * 0.44)), QFont.Weight.Bold)
+
+    def _text_width(self, height):
+        metrics = QFontMetrics(self._font(height))
+        return metrics.horizontalAdvance(self.label) + 16
+
+    def _render(self):
+        colors = S.THUMBNAIL_STATUS_COLORS
+        ratio = self.devicePixelRatioF()
+        w = max(1, round(self.width() * ratio))
+        h = max(1, round(self.height() * ratio))
+        canvas = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        background = QColor(colors.get(self.code, colors["ongoing"]))
+        background.setAlpha(int(colors["alpha"]))
+        border = QColor(colors["border"])
+        border.setAlpha(int(colors["border_alpha"]))
+        pen = QPen(border)
+        pen.setWidthF(ratio)
+        painter.setPen(pen)
+        painter.setBrush(background)
+        inset = ratio / 2
+        painter.drawRoundedRect(QRectF(inset, inset, w - 2 * inset, h - 2 * inset),
+                                5 * ratio, 5 * ratio)
+
+        font = self._font(self.height())
+        font.setPointSizeF(font.pointSizeF() * ratio)
+        painter.setFont(font)
+        painter.setPen(QColor(colors["text"]))
+        painter.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.label)
+        painter.end()
+
         pixmap = QPixmap.fromImage(canvas)
         pixmap.setDevicePixelRatio(ratio)
         self.setPixmap(pixmap)
@@ -443,7 +666,8 @@ class CountBadge(QLabel):
         super().__init__(parent)
         self.count = count
         self.setFixedSize(max(round(height * 3 / 2), self._text_width(height)), height)
-        self.setToolTip("1 chapitre" if count == 1 else f"{count} chapitres")
+        self.setToolTip(tr("1 chapitre") if count == 1
+                        else tr("{count} chapitres").format(count=count))
         # Le clic doit continuer d'ouvrir la collection, pas mourir sur la
         # pastille.
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -592,7 +816,7 @@ class HomePage(QWidget):
         logo_label.setPixmap(logo_pixmap.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        subtitle = QLabel("Un Lecteur de Manga Offline")
+        subtitle = QLabel(tr("Un Lecteur de Manga Offline"))
         subtitle.setFont(QFont("Inter", 13))
         subtitle.setStyleSheet(S.HOME_SUBTITLE_STYLE)
         layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -600,13 +824,13 @@ class HomePage(QWidget):
         # Deux entrées : la bibliothèque porte l'accent, le fichier isolé reste sobre.
         btn_layout1 = QHBoxLayout()
         btn_layout1.setSpacing(16)
-        open_btn = QPushButton("OPEN FILE")
+        open_btn = QPushButton(tr("OUVRIR UN FICHIER"))
         open_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
         open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         open_btn.setStyleSheet(S.HOME_SECONDARY_BUTTON_STYLE)
         open_btn.clicked.connect(self.open_file_dialog.emit)
         btn_layout1.addWidget(open_btn)
-        bookshelf_btn = QPushButton("BOOKSHELF")
+        bookshelf_btn = QPushButton(tr("BIBLIOTHÈQUE"))
         bookshelf_btn.setFixedSize(HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT)
         bookshelf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         bookshelf_btn.setStyleSheet(S.HOME_PRIMARY_BUTTON_STYLE)
@@ -621,7 +845,7 @@ class HomePage(QWidget):
         settings_btn.setFixedSize(HOME_BUTTON_HEIGHT, HOME_BUTTON_HEIGHT)
         settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         settings_btn.setStyleSheet(S.HOME_ICON_BUTTON_STYLE)
-        settings_btn.setToolTip("Paramètres")
+        settings_btn.setToolTip(tr("Paramètres"))
         settings_btn.clicked.connect(self.open_settings.emit)
         btn_layout1.addWidget(settings_btn)
 
@@ -634,8 +858,8 @@ class HomePage(QWidget):
         self.theme_btn.setFixedSize(HOME_BUTTON_HEIGHT, HOME_BUTTON_HEIGHT)
         self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_btn.setStyleSheet(S.HOME_ICON_BUTTON_STYLE)
-        self.theme_btn.setToolTip("Revenir au thème clair" if dark
-                                  else "Passer au thème sombre")
+        self.theme_btn.setToolTip(tr("Revenir au thème clair") if dark
+                                  else tr("Passer au thème sombre"))
         self.theme_btn.clicked.connect(self.toggle_theme.emit)
         btn_layout1.addWidget(self.theme_btn)
 
@@ -667,13 +891,15 @@ class ThumbnailWidget(QWidget):
     clicked = Signal()
     remove_requested = Signal(str)
     alias_requested = Signal(str, str)
+    subtitle_requested = Signal(str, str)   # chemin, sous-titre actuel
+    status_requested = Signal(str, str)     # chemin, code de statut ("" pour aucun)
     cover_requested = Signal(str)
     tags_requested = Signal(str)
     language_requested = Signal(str, str)   # chemin, code de langue ("" pour aucune)
 
     def __init__(self, thumb_path, title_text, path=None, width=None,
                  height=None, show_menu=True, checkbox=None,
-                 language=None, count=None):
+                 language=None, count=None, subtitle=None, status=None):
         super().__init__()
         self.thumb_path = thumb_path
         self._rendered_ratio = None
@@ -687,6 +913,8 @@ class ThumbnailWidget(QWidget):
         self.show_menu = show_menu
         self.checkbox = checkbox
         self.language = language
+        self.subtitle = subtitle
+        self.status = status
         # None : la vignette n'est pas une collection. 0 : elle est vide, et il
         # n'y a rien d'utile à afficher non plus.
         self.count = count
@@ -697,7 +925,9 @@ class ThumbnailWidget(QWidget):
         # L'ombre portée déborde de la pochette : sans ces marges, le parent la
         # rognerait net.
         layout.setContentsMargins(*THUMB_SHADOW_MARGINS)
-        layout.setSpacing(2)
+        # L'ombre tombe entre la pochette et son titre : collé à 2 px, le texte
+        # se posait dedans et les deux se brouillaient.
+        layout.setSpacing(14)
         self.setStyleSheet("")
         self.img_label = RoundedLabel()
         self.img_label.setContentsMargins(0, 0, 0, 0)
@@ -715,25 +945,37 @@ class ThumbnailWidget(QWidget):
         info_layout = QHBoxLayout() if self.checkbox else QVBoxLayout()
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(4)
+        # Titre et sous-titre voyagent ensemble : les deux dispositions, avec
+        # ou sans case à cocher, posent le même bloc.
+        text_block = QWidget()
+        text_layout = QVBoxLayout(text_block)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(1)
+        self.title_label = QLabel(self.title_text)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setWordWrap(True)
+        self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
+        self.title_label.setStyleSheet(S.THUMBNAIL_TITLE_STYLE)
+        text_layout.addWidget(self.title_label)
+        if self.subtitle:
+            # Le titre se cale en bas de sa boîte plutôt qu'en son centre :
+            # centré, il laissait vingt pixels de vide avant son sous-titre.
+            self.title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter
+                                          | Qt.AlignmentFlag.AlignBottom)
+            self.subtitle_label = QLabel(self.subtitle)
+            self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignHCenter
+                                             | Qt.AlignmentFlag.AlignTop)
+            self.subtitle_label.setWordWrap(True)
+            self.subtitle_label.setStyleSheet(S.THUMBNAIL_SUBTITLE_STYLE)
+            text_layout.addWidget(self.subtitle_label)
         if self.checkbox:
             self.checkbox.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.checkbox.setEnabled(True)
             self.checkbox.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             info_layout.addWidget(self.checkbox, alignment=Qt.AlignmentFlag.AlignVCenter)
-            self.title_label = QLabel(self.title_text)
-            self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.title_label.setWordWrap(True)
-            self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
-            self.title_label.setStyleSheet(S.THUMBNAIL_TITLE_STYLE)
-            info_layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-            info_layout.addStretch(1)
+            info_layout.addWidget(text_block, 1)
         else:
-            self.title_label = QLabel(self.title_text)
-            self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.title_label.setWordWrap(True)
-            self.title_label.setMinimumHeight(40)  # Hauteur minimale pour les titres longs
-            self.title_label.setStyleSheet(S.THUMBNAIL_TITLE_STYLE)
-            info_layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+            info_layout.addWidget(text_block)
         info_widget.setLayout(info_layout)
         layout.addWidget(info_widget, alignment=Qt.AlignmentFlag.AlignHCenter)
         if self.language:
@@ -743,12 +985,19 @@ class ThumbnailWidget(QWidget):
             flag.move(self.thumb_width - flag.width() - corner,
                       self.thumb_height - flag.height() - corner)
             flag.raise_()
+        corner = THUMB_BORDER_WIDTH + 5
+        bottom = self.thumb_height - corner
         if self.count:
             # Coin inférieur gauche, en vis-à-vis du drapeau de langue.
             badge = CountBadge(self.count, parent=self.img_label)
-            corner = THUMB_BORDER_WIDTH + 5
-            badge.move(corner, self.thumb_height - badge.height() - corner)
+            badge.move(corner, bottom - badge.height())
             badge.raise_()
+            bottom -= badge.height() + 4
+        if self.status:
+            # Empilé juste au-dessus du compteur, ou à sa place s'il n'y en a pas.
+            status_badge = StatusBadge(self.status, parent=self.img_label)
+            status_badge.move(corner, bottom - status_badge.height())
+            status_badge.raise_()
         if self.show_menu and self.path:
             debug(f"[DEBUG] Création du menu contextuel pour : {self.path}")
             # Enfant du visuel, posé dans son coin supérieur droit : le bouton
@@ -766,27 +1015,49 @@ class ThumbnailWidget(QWidget):
                 Le construire pour chaque vignette représentait plus de la
                 moitié du coût de fabrication d'une grille.
                 """
-                menu = QMenu()
-                alias_action = menu.addAction("Set alias")
-                alias_action.triggered.connect(lambda: self.alias_requested.emit(self.path, self.title_text))
+                menu = make_thumbnail_menu(menu_btn)
+                menu_action(menu, tr("Renommer…"), "pencil",
+                            lambda: self.alias_requested.emit(self.path, self.title_text))
+                menu_action(menu, tr("Sous-titre…"), "card-text",
+                            lambda: self.subtitle_requested.emit(self.path, self.subtitle or ""))
 
-                language_menu = menu.addMenu("Langue")
+                language_menu = menu.addMenu(QIcon(themed_icon("translate")), tr("Langue"))
+                language_menu.setStyleSheet(S.THUMBNAIL_MENU_STYLE)
                 choices = QActionGroup(language_menu)
                 choices.setExclusive(True)
                 for code, label in LANGUAGES:
-                    action = language_menu.addAction(label)
+                    action = language_menu.addAction(tr(label))
                     action.setCheckable(True)
                     action.setChecked(code == self.language)
                     choices.addAction(action)
                     action.triggered.connect(
                         lambda _checked=False, c=code: self.language_requested.emit(self.path, c))
                 language_menu.addSeparator()
-                clear_action = language_menu.addAction("Aucune")
+                clear_action = language_menu.addAction(tr("Aucune"))
                 clear_action.setCheckable(True)
                 clear_action.setChecked(not self.language)
                 choices.addAction(clear_action)
                 clear_action.triggered.connect(
                     lambda: self.language_requested.emit(self.path, ""))
+
+                status_menu = menu.addMenu(QIcon(themed_icon("bookmark")), tr("Statut"))
+                status_menu.setStyleSheet(S.THUMBNAIL_MENU_STYLE)
+                status_choices = QActionGroup(status_menu)
+                status_choices.setExclusive(True)
+                for code, label in STATUSES:
+                    action = status_menu.addAction(tr(label))
+                    action.setCheckable(True)
+                    action.setChecked(code == self.status)
+                    status_choices.addAction(action)
+                    action.triggered.connect(
+                        lambda _checked=False, c=code: self.status_requested.emit(self.path, c))
+                status_menu.addSeparator()
+                no_status = status_menu.addAction(tr("Aucun"))
+                no_status.setCheckable(True)
+                no_status.setChecked(not self.status)
+                status_choices.addAction(no_status)
+                no_status.triggered.connect(
+                    lambda: self.status_requested.emit(self.path, ""))
                 if os.path.isdir(self.path):
                     # Remplacer Add Tags par Original Cover
                     def set_original_cover():
@@ -809,8 +1080,8 @@ class ThumbnailWidget(QWidget):
                                 # Rafraîchir la vignette
                                 self.update_thumbnail(cover_path)
 
-                    original_cover_action = menu.addAction("Original Cover")
-                    original_cover_action.triggered.connect(set_original_cover)
+                    menu.addSeparator()
+                    menu_action(menu, tr("Couverture d'origine"), "image", set_original_cover)
                 
 
             
@@ -890,7 +1161,7 @@ class ThumbnailWidget(QWidget):
                             
                                 # Afficher un message de confirmation
                                 from PySide6.QtWidgets import QMessageBox
-                                QMessageBox.information(None, "Succès", f"Couverture téléchargée pour {manga_name}")
+                                QMessageBox.information(None, tr("Succès"), f"Couverture téléchargée pour {manga_name}")
                             
                                 # Sauvegarder les informations AniList si pas déjà fait
                                 anilist_file = os.path.join(target_path, '.anilist.json')
@@ -908,22 +1179,24 @@ class ThumbnailWidget(QWidget):
                                 # Afficher un message d'erreur spécifique
                                 from PySide6.QtWidgets import QMessageBox
                                 if resp.status_code == 404:
-                                    QMessageBox.warning(None, "Couverture introuvable", f"La couverture pour {manga_name} n'est plus disponible sur le serveur")
+                                    QMessageBox.warning(None, tr("Couverture introuvable"), f"La couverture pour {manga_name} n'est plus disponible sur le serveur")
                                 else:
-                                    QMessageBox.warning(None, "Erreur de téléchargement", f"Impossible de télécharger la couverture pour {manga_name} (Erreur {resp.status_code})")
+                                    QMessageBox.warning(None, tr("Erreur de téléchargement"), f"Impossible de télécharger la couverture pour {manga_name} (Erreur {resp.status_code})")
                         except Exception as e:
                             debug(f"[DEBUG] Exception téléchargement couverture : {e}")
                             # Afficher un message d'erreur pour les exceptions réseau
                             from PySide6.QtWidgets import QMessageBox
-                            QMessageBox.warning(None, "Erreur réseau", f"Erreur de connexion lors du téléchargement de la couverture pour {manga_name}")
+                            QMessageBox.warning(None, tr("Erreur réseau"), f"Erreur de connexion lors du téléchargement de la couverture pour {manga_name}")
                     else:
                         debug(f"[DEBUG] Aucune couverture trouvée pour : {manga_name}")
                         # Afficher un message d'erreur
                         from PySide6.QtWidgets import QMessageBox
-                        QMessageBox.warning(None, "Aucune couverture trouvée", f"Aucune couverture trouvée pour {manga_name} sur AniList ou MangaDex")
+                        QMessageBox.warning(None, tr("Aucune couverture trouvée"), f"Aucune couverture trouvée pour {manga_name} sur AniList ou MangaDex")
             
-                download_cover_action = menu.addAction("Download Cover")
-                download_cover_action.triggered.connect(download_cover_from_anilist_for_all)
+                if not os.path.isdir(self.path):
+                    menu.addSeparator()
+                menu_action(menu, tr("Télécharger la couverture"), "cloud-download",
+                            download_cover_from_anilist_for_all)
             
                 # Ajouter l'option Cover From My Computer
                 def cover_from_computer():
@@ -934,7 +1207,7 @@ class ThumbnailWidget(QWidget):
                     from PySide6.QtWidgets import QFileDialog
                     image_path, _ = QFileDialog.getOpenFileName(
                         None,
-                        "Choisir une image de couverture",
+                        tr("Choisir une image de couverture"),
                         "",
                         "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
                     )
@@ -967,31 +1240,34 @@ class ThumbnailWidget(QWidget):
                                 from PySide6.QtWidgets import QMessageBox
                                 QMessageBox.information(
                                     None, 
-                                    "Succès", 
-                                    f"Couverture personnalisée ajoutée avec succès"
+                                    tr("Succès"), 
+                                    tr("Couverture personnalisée ajoutée avec succès")
                                 )
                             else:
                                 QMessageBox.warning(
                                     None, 
-                                    "Erreur", 
-                                    "Impossible de charger l'image sélectionnée"
+                                    tr("Erreur"), 
+                                    tr("Impossible de charger l'image sélectionnée")
                                 )
                         except Exception as e:
                             debug(f"[DEBUG] Erreur lors de l'ajout de la couverture : {e}")
                             from PySide6.QtWidgets import QMessageBox
                             QMessageBox.warning(
                                 None, 
-                                "Erreur", 
+                                tr("Erreur"), 
                                 f"Erreur lors de l'ajout de la couverture : {e}"
                             )
             
-                cover_from_computer_action = menu.addAction("Cover From My Computer")
-                cover_from_computer_action.triggered.connect(cover_from_computer)
-            
-                explorer_action = menu.addAction("Open in Explorer")
-                explorer_action.triggered.connect(lambda: self.open_in_explorer(self.path))
-                remove_action = menu.addAction("Remove from bookshelf")
-                remove_action.triggered.connect(lambda checked=False, p=self.path: self.remove_requested.emit(p))
+                menu_action(menu, tr("Couverture depuis mon ordinateur"), "file-image",
+                            cover_from_computer)
+
+                menu.addSeparator()
+                menu_action(menu, tr("Ouvrir dans l'explorateur"), "folder-open",
+                            lambda: self.open_in_explorer(self.path))
+
+                menu.addSeparator()
+                menu_action(menu, tr("Retirer de la bibliothèque"), "trash",
+                            lambda: self.remove_requested.emit(self.path))
                 return menu
 
             menu_btn.clicked.connect(lambda: build_menu().exec(
@@ -1205,6 +1481,94 @@ class ResponsiveGridView(QWidget):
 # =====================================================================================
 # PAGE BIBLIOTHEQUE
 # =====================================================================================
+class PromptDialog(QDialog):
+    """Petite boîte de saisie aux couleurs de l'application.
+
+    Elle remplace QInputDialog, dont la fenêtre système jurait avec le reste :
+    même carte sans cadre que la boîte de progression, un champ, deux boutons.
+    """
+
+    CARD_MARGIN = 14
+    WIDTH = 460
+
+    def __init__(self, title, message, text="", parent=None):
+        super().__init__(parent)
+        self.setModal(True)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(self.CARD_MARGIN, self.CARD_MARGIN,
+                                 self.CARD_MARGIN, self.CARD_MARGIN + 4)
+        card = QWidget()
+        card.setObjectName("promptCard")
+        card.setStyleSheet(S.PROMPT_CARD_STYLE)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(34)
+        shadow.setColor(QColor(0, 0, 0, 130))
+        shadow.setOffset(0, 8)
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(6)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet(S.PROMPT_TITLE_STYLE)
+        layout.addWidget(title_label)
+
+        message_label = QLabel(message)
+        message_label.setWordWrap(True)
+        message_label.setStyleSheet(S.PROMPT_MESSAGE_STYLE)
+        layout.addWidget(message_label)
+        layout.addSpacing(8)
+
+        self.field = QLineEdit(text)
+        self.field.setStyleSheet(S.PROMPT_INPUT_STYLE)
+        self.field.selectAll()
+        # Entrée valide, Échap annule : le comportement attendu d'une saisie.
+        self.field.returnPressed.connect(self.accept)
+        layout.addWidget(self.field)
+        layout.addSpacing(12)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        buttons.addStretch()
+        cancel = QPushButton(tr("Annuler"))
+        cancel.setFixedHeight(34)
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.setStyleSheet(S.SETTINGS_ACTION_BUTTON_STYLE)
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        confirm = QPushButton(tr("Valider"))
+        confirm.setFixedHeight(34)
+        confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        confirm.setStyleSheet(S.SETTINGS_PRIMARY_BUTTON_STYLE)
+        confirm.setDefault(True)
+        confirm.clicked.connect(self.accept)
+        buttons.addWidget(confirm)
+        layout.addLayout(buttons)
+
+        self.setFixedWidth(self.WIDTH)
+        self.setFixedHeight(self.sizeHint().height())
+
+    def showEvent(self, event):
+        """Sans cadre système, Qt ne recentre pas la boîte sur la fenêtre."""
+        super().showEvent(event)
+        parent = self.parentWidget()
+        if parent is not None:
+            self.move(parent.window().frameGeometry().center() - self.rect().center())
+        self.field.setFocus()
+
+
+def ask_text(parent, title, message, text=""):
+    """Demande une ligne de texte. Retourne (texte, validé), comme QInputDialog."""
+    dialog = PromptDialog(title, message, text, parent)
+    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    return dialog.field.text(), accepted
+
+
 class ProgressDialog(QDialog):
     """Carte de progression flottante, sans cadre système.
 
@@ -1214,7 +1578,7 @@ class ProgressDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Génération des vignettes")
+        self.setWindowTitle(tr("Génération des vignettes"))
         self.setModal(True)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -1250,7 +1614,7 @@ class ProgressDialog(QDialog):
         head.addWidget(self.percent_label)
         layout.addLayout(head)
 
-        self.label = QLabel("Préparation…")
+        self.label = QLabel(tr("Préparation…"))
         self.label.setFont(QFont("Inter", 10))
         self.label.setStyleSheet(S.PROGRESS_MESSAGE_STYLE)
         layout.addWidget(self.label)
@@ -1332,7 +1696,7 @@ class BookShelfPage(QWidget):
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(0)
-        title = QLabel("BookShelf")
+        title = QLabel(tr("Bibliothèque"))
         title.setFont(QFont("Inter", 20, QFont.Weight.Bold))
         title.setStyleSheet(S.PAGE_TITLE_STYLE_BOOKSHELF)
         self.count_label = QLabel()
@@ -1355,17 +1719,17 @@ class BookShelfPage(QWidget):
         filter_bar = toolbar.layout()
 
         filter_btn = make_toolbar_btn(resource_path("assets/icons/funnel-white.svg"),
-                                      "Filtrer", lambda: None)
+                                      tr("Filtrer"), lambda: None)
         filter_bar.addWidget(filter_btn)
 
         # Bouton Sélectionner (sélection multiple)
         self.select_btn = make_toolbar_btn(resource_path("assets/icons/check2-all-white.svg"),
-                                           "Sélectionner des fichiers",
+                                           tr("Sélectionner des fichiers"),
                                            self.toggle_selection_mode, checkable=True)
         filter_bar.addWidget(self.select_btn)
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("Rechercher une collection")
+        self.search_field.setPlaceholderText(tr("Rechercher une collection"))
         self.search_field.setStyleSheet(S.HEADER_SEARCH_STYLE)
         self.search_field.setFixedHeight(HEADER_BTN_SIZE)
         self.search_field.setFixedWidth(0)
@@ -1406,12 +1770,12 @@ class BookShelfPage(QWidget):
                 self.search_field.clearFocus()
 
         search_btn = make_toolbar_btn(resource_path("assets/icons/search-white.svg"),
-                                      "Rechercher", toggle_search, checkable=True)
+                                      tr("Rechercher"), toggle_search, checkable=True)
         filter_bar.addWidget(search_btn)
 
         self.sort_az = True
         self.sort_btn = make_toolbar_btn(resource_path("assets/icons/sort-alpha-down-white.svg"),
-                                         "Trier A-Z", self.toggle_sort)
+                                         tr("Trier A-Z"), self.toggle_sort)
         filter_bar.addWidget(self.sort_btn)
         # Ordre d'ouverture choisi dans les paramètres. La bibliothèque n'est pas
         # réécrite au passage : seul un tri demandé à la main est enregistré.
@@ -1420,13 +1784,13 @@ class BookShelfPage(QWidget):
         header.addWidget(toolbar)
 
         # Action principale, la seule en couleur pleine.
-        add_btn = QPushButton("  Ajouter")
+        add_btn = QPushButton("  " + tr("Ajouter"))
         add_btn.setIcon(QIcon(resource_path("assets/icons/folder-plus-white.svg")))
         add_btn.setIconSize(QSize(18, 18))
         add_btn.setFixedHeight(HEADER_TOOLBAR_HEIGHT)
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.setStyleSheet(S.HEADER_PRIMARY_BUTTON_STYLE)
-        add_btn.setToolTip("Ajouter un dossier")
+        add_btn.setToolTip(tr("Ajouter un dossier"))
         add_btn.clicked.connect(self.add_folder_clicked.emit)
         header.addWidget(add_btn)
 
@@ -1475,7 +1839,6 @@ class BookShelfPage(QWidget):
                         # Télécharger la bannière si elle existe (AniList uniquement)
                         banner_url = info.get('banner')
                         if banner_url:
-                            import requests
                             thumb_dir = os.path.join(folder_path, '.thumbnails')
                             try:
                                 os.makedirs(thumb_dir, exist_ok=True)
@@ -1496,7 +1859,6 @@ class BookShelfPage(QWidget):
                         # Télécharger la couverture comme vignette du dossier
                         cover_url = info.get('cover')
                         if cover_url:
-                            import requests
                             thumb_dir = os.path.join(folder_path, '.thumbnails')
                             try:
                                 os.makedirs(thumb_dir, exist_ok=True)
@@ -1522,19 +1884,22 @@ class BookShelfPage(QWidget):
                 error_msg = (f"Impossible d'accéder au dossier ou de créer le répertoire des vignettes.\n\n"
                              f"Vérifiez que le disque est bien connecté et que vous avez les droits d'écriture.\n\n"
                              f"Erreur: {e}")
-                QMessageBox.critical(self, "Erreur d'accès au dossier", error_msg)
+                QMessageBox.critical(self, tr("Erreur d'accès au dossier"), error_msg)
             finally:
                 progress_dialog.close()
     
     def refresh_shelf(self):
         widgets = []
         search = self.search_field.text().strip().lower() if hasattr(self, 'search_field') else ""
-        # On va filtrer les dossiers inexistants
-        valid_library = []
+        # Un dossier absent est seulement laissé de côté à l'affichage. Il n'est
+        # PAS retiré de library.json : un disque externe débranché, ou juste
+        # endormi, effaçait sinon toute la bibliothèque d'un coup, sans retour
+        # possible. Seul « Retirer de la bibliothèque » supprime une entrée.
+        visible = []
         for entry in self.library:
             path = entry["path"]
             if not os.path.exists(path):
-                continue  # Ignore les dossiers qui n'existent plus
+                continue
             name = entry.get("alias", os.path.basename(path))  # Utilise l'alias s'il existe
             if not search or search in name.lower():
                 thumb_path = ensure_folder_thumbnail(path)
@@ -1542,8 +1907,10 @@ class BookShelfPage(QWidget):
                 if not thumb_path:
                     thumb_path = create_default_thumbnail() or "assets/images/manga_sample.png"
                 chapters = count_chapters(path)
+                subtitle = entry.get("subtitle")
+                status = entry.get("status")
                 vignette = ThumbnailWidget(thumb_path, name, path=path, language=language,
-                                           count=chapters)
+                                           count=chapters, subtitle=subtitle, status=status)
                 def on_folder_selected(p=path):
                     debug(f"[DEBUG] Signal folder_selected émis avec : {p}")
                     self.folder_selected.emit(p)
@@ -1562,43 +1929,44 @@ class BookShelfPage(QWidget):
                             self.selected_items.discard(p)
                         if self.selected_items:
                             self.select_btn.setIcon(QIcon("assets/icons/trash-white.svg"))
-                            self.select_btn.setToolTip("Supprimer la sélection")
+                            self.select_btn.setToolTip(tr("Supprimer la sélection"))
                         else:
                             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-                            self.select_btn.setToolTip("Sélectionner des dossiers")
+                            self.select_btn.setToolTip(tr("Sélectionner des dossiers"))
                     checkbox.stateChanged.connect(on_state_changed)
                     vignette = ThumbnailWidget(thumb_path, name, path=path, checkbox=checkbox,
-                                               language=language, count=chapters)
+                                               language=language, count=chapters,
+                                               subtitle=subtitle, status=status)
                     vignette.clicked.connect(on_folder_selected)
                 
                 # Connecter les signaux une seule fois
                 vignette.clicked.connect(on_folder_selected)
                 vignette.remove_requested.connect(self.remove_folder)
                 vignette.alias_requested.connect(self.set_folder_alias)
+                vignette.subtitle_requested.connect(self.set_folder_subtitle)
+                vignette.status_requested.connect(self.set_folder_status)
                 vignette.cover_requested.connect(self.set_folder_cover)
                 vignette.language_requested.connect(self.set_folder_language)
                 widgets.append(vignette)
-            valid_library.append(entry)
-        if len(valid_library) != len(self.library):
-            self.library = valid_library
-            self.save_library()
+            visible.append(entry)
         debug("[DEBUG] Aucun fichier ou dossier supporté trouvé dans ce dossier.")
         self.grid_view.set_items(widgets)
         # Mettre à jour l'icône du bouton après le refresh
         if self.selection_mode:
             if self.selected_items:
                 self.select_btn.setIcon(QIcon("assets/icons/trash-white.svg"))
-                self.select_btn.setToolTip("Supprimer la sélection")
+                self.select_btn.setToolTip(tr("Supprimer la sélection"))
             else:
                 self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-                self.select_btn.setToolTip("Sélectionner des fichiers")
+                self.select_btn.setToolTip(tr("Sélectionner des fichiers"))
         else:
             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-            self.select_btn.setToolTip("Sélectionner des fichiers")
+            self.select_btn.setToolTip(tr("Sélectionner des fichiers"))
         self.select_btn.setChecked(self.selection_mode)
-        count = len(valid_library)
-        self.count_label.setText("Aucune collection" if count == 0
-                                 else f"{count} collection{'s' if count > 1 else ''}")
+        count = len(visible)
+        self.count_label.setText(
+            tr("Aucune collection") if count == 0
+            else tr("{count} collections" if count > 1 else "{count} collection").format(count=count))
 
     def remove_folder(self, folder_path):
         self.library = [d for d in self.library if d["path"] != folder_path]
@@ -1609,7 +1977,7 @@ class BookShelfPage(QWidget):
         """Définit une couverture personnalisée pour un dossier."""
         image_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Choisir une image de couverture",
+            tr("Choisir une image de couverture"),
             "",
             "Images (*.png *.jpg *.jpeg *.bmp)"
         )
@@ -1672,6 +2040,37 @@ class BookShelfPage(QWidget):
                 break
         self.refresh_shelf()
 
+    def set_folder_status(self, folder_path, code):
+        """Statut d'une collection : rangé dans la bibliothèque, comme la langue."""
+        for entry in self.library:
+            if entry["path"] == folder_path:
+                if code:
+                    entry["status"] = code
+                else:
+                    entry.pop("status", None)
+                self.save_library()
+                break
+        self.refresh_shelf()
+
+    def set_folder_subtitle(self, folder_path, current):
+        """Sous-titre d'une collection : rangé dans la bibliothèque, comme l'alias."""
+        text, ok = ask_text(
+            self, tr("Sous-titre"),
+            tr("Petite ligne affichée sous le titre. Laissez vide pour l'enlever."),
+            current)
+        if not ok:
+            return
+        for entry in self.library:
+            if entry["path"] == folder_path:
+                text = text.strip()
+                if text:
+                    entry["subtitle"] = text
+                else:
+                    entry.pop("subtitle", None)
+                self.save_library()
+                break
+        self.refresh_shelf()
+
     def set_folder_alias(self, folder_path, current_name):
         """Définit un alias pour un dossier"""
         # Trouver l'entrée dans la bibliothèque
@@ -1682,11 +2081,11 @@ class BookShelfPage(QWidget):
                 break
         if entry:
             # Ouvrir une boîte de dialogue pour saisir le nouvel alias
-            new_alias, ok = QInputDialog.getText(
-                self, 
-                "Définir un alias", 
-                f"Entrez le nouveau nom pour '{current_name}':",
-                text=current_name
+            new_alias, ok = ask_text(
+                self,
+                tr("Renommer"),
+                tr("Nom affiché à la place de « {name} ».").format(name=current_name),
+                current_name
             )
             # Vérifier que l'utilisateur a cliqué sur OK et que le texte n'est pas vide
             if ok and new_alias and new_alias.strip():
@@ -1714,7 +2113,7 @@ class BookShelfPage(QWidget):
                           reverse=not az)
         icon = "sort-alpha-up-white.svg" if az else "sort-alpha-down-white.svg"
         self.sort_btn.setIcon(QIcon(resource_path(f"assets/icons/{icon}")))
-        self.sort_btn.setToolTip("Trier Z-A" if az else "Trier A-Z")
+        self.sort_btn.setToolTip(tr("Trier Z-A") if az else tr("Trier A-Z"))
         self.sort_az = not az
         if save:
             self.save_library()
@@ -1757,7 +2156,7 @@ def make_toolbar_btn(icon_path, tooltip, callback, checkable=False):
 def make_back_btn(callback):
     """Retour : détaché de la pilule, mais de la même matière."""
     btn = make_toolbar_btn(resource_path("assets/icons/arrow-left-white.png"),
-                           "Retour", callback)
+                           tr("Retour"), callback)
     btn.setFixedSize(HEADER_TOOLBAR_HEIGHT, HEADER_TOOLBAR_HEIGHT)
     btn.setStyleSheet(S.HEADER_BACK_BUTTON_STYLE)
     return btn
@@ -1834,6 +2233,14 @@ class FolderViewPage(QWidget):
         self.path_label.setStyleSheet(
             "color: #e6e6e6; text-shadow: 1px 1px 8px #000; background: transparent; margin: 0; padding: 0;"
         )
+        # Un titre plus long que la bannière repousserait la pilule d'actions
+        # hors de la fenêtre : les deux textes acceptent de rétrécir et sont
+        # coupés à droite, le texte entier restant dans l'infobulle.
+        for label in (self.title_label, self.path_label):
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.header_title = ""
+        self.header_path = ""
+
         left_col.addWidget(self.title_label)
         left_col.addWidget(self.path_label)
         left_col.addStretch(1)
@@ -1847,13 +2254,20 @@ class FolderViewPage(QWidget):
 
         # Bouton unique de sélection/suppression
         self.select_btn = make_toolbar_btn(resource_path("assets/icons/check2-all-white.svg"),
-                                           "Sélectionner des fichiers",
+                                           tr("Sélectionner des fichiers"),
                                            self.on_select_btn_clicked, checkable=True)
+        # Masquage du synopsis pour ce dossier seulement. L'œil barré dit ce
+        # que fera le clic, comme la lune du thème sur la page d'accueil.
+        self.hide_desc_btn = make_toolbar_btn(
+            resource_path("assets/icons/eye-slash-white.svg"),
+            tr("Masquer le synopsis"), self.toggle_folder_description)
+
         right_col.addWidget(make_toolbar_group(
             make_toolbar_btn(resource_path("assets/icons/palette-white.svg"),
-                             "Changer la bannière", self.set_header_background),
+                             tr("Changer la bannière"), self.set_header_background),
+            self.hide_desc_btn,
             make_toolbar_btn(resource_path("assets/icons/arrow-clockwise-white.svg"),
-                             "Rafraîchir", self.refresh_folder),
+                             tr("Rafraîchir"), self.refresh_folder),
             self.select_btn,
         ))
         header_layout.addLayout(right_col)
@@ -1864,7 +2278,12 @@ class FolderViewPage(QWidget):
         central_layout = QHBoxLayout()
         central_layout.setSpacing(30)
 
-        left_col = QVBoxLayout()
+        # Synopsis et tags vivent dans une zone qui défile : un long résumé
+        # suivi de vingt tags dépassait la fenêtre sans aucun moyen d'aller voir
+        # la suite.
+        self.info_panel = QWidget()
+        left_col = QVBoxLayout(self.info_panel)
+        left_col.setContentsMargins(0, 0, 14, 0)   # place pour l'ascenseur
         left_col.setSpacing(16)
         self.anilist_desc_label = QLabel()
         # Les synopsis AniList et MangaDex contiennent du HTML (<br>, <i>) :
@@ -1874,18 +2293,27 @@ class FolderViewPage(QWidget):
         self.anilist_desc_label.setWordWrap(True)
         self.anilist_desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.anilist_desc_label.setStyleSheet(S.FOLDER_DESC_STYLE)
-        self.anilist_desc_label.setMaximumWidth(400)
-        left_col.addWidget(self.anilist_desc_label, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        # Surtout pas d'alignement sur ces deux-là : un widget aligné reçoit sa
+        # taille indicative, et non la hauteur que réclame sa largeur. Le résumé
+        # comme les tags s'en trouvaient coupés après la première ligne.
+        left_col.addWidget(self.anilist_desc_label)
 
         self.anilist_tags_widget = QWidget()
         self.anilist_tags_layout = FlowLayout(self.anilist_tags_widget, margin=0, spacing=8)
-        left_col.addWidget(self.anilist_tags_widget, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        left_col.addWidget(self.anilist_tags_widget)
         left_col.addStretch(1)
+
+        self.info_scroll = QScrollArea()
+        self.info_scroll.setWidgetResizable(True)
+        self.info_scroll.setWidget(self.info_panel)
+        self.info_scroll.setStyleSheet(S.SCROLL_AREA_STYLE)
+        self.info_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.info_scroll.setMaximumWidth(FOLDER_INFO_WIDTH)
 
         right_col = QVBoxLayout()
         right_col.addWidget(self.grid_view)
 
-        central_layout.addLayout(left_col, 1)
+        central_layout.addWidget(self.info_scroll, 1)
         central_layout.addLayout(right_col, 3)
 
         layout.addLayout(central_layout)
@@ -1936,10 +2364,16 @@ class FolderViewPage(QWidget):
             except Exception as e:
                 print(f"Erreur lecture alias: {e}")
         # Afficher l'alias si disponible, sinon le nom du dossier
-        self.title_label.setText(alias if alias else os.path.basename(folder_path))
-        self.path_label.setText(folder_path)
+        self.header_title = alias if alias else os.path.basename(folder_path)
+        self.header_path = folder_path
         # Charger l'image de fond du header
         self.load_header_background()
+        # Après la feuille de style, qui décide de la taille du texte. Le second
+        # passage attend la fin de la mise en page : à la toute première
+        # ouverture, le label n'a pas encore reçu sa largeur définitive et le
+        # titre serait coupé bien trop court.
+        self.update_header_elision()
+        QTimer.singleShot(0, self.update_header_elision)
         # Charger le descriptif et les tags AniList
         anilist_file = os.path.join(folder_path, '.anilist.json')
         desc = ''
@@ -1957,6 +2391,8 @@ class FolderViewPage(QWidget):
         else:
             debug(f"[DEBUG] .anilist.json absent dans : {folder_path}")
         self.anilist_desc_label.setText(desc)
+        self.has_description = bool(desc or tags_list)
+        self.update_description_visibility()
         # Affichage des tags façon 'pills'
         # Nettoyer l'ancien contenu
         for i in reversed(range(self.anilist_tags_layout.count())):
@@ -1968,6 +2404,47 @@ class FolderViewPage(QWidget):
             tag_label.setStyleSheet(S.FOLDER_TAG_STYLE)
             self.anilist_tags_layout.addWidget(tag_label)
         self.refresh_view()
+
+    def update_header_elision(self):
+        """Coupe titre et chemin à la largeur qui leur reste."""
+        for label, text in ((self.title_label, self.header_title),
+                            (self.path_label, self.header_path)):
+            available = max(60, label.width())
+            label.setText(label.fontMetrics().elidedText(
+                text, Qt.TextElideMode.ElideRight, available))
+            label.setToolTip(text)
+
+    def description_hidden(self):
+        """Le synopsis est-il masqué, globalement ou pour ce seul dossier ?"""
+        if settings.get("hide_description"):
+            return True
+        return bool(load_folder_prefs(self.folder_path).get("hide_description"))
+
+    def update_description_visibility(self):
+        """Accorde la colonne et son bouton sur les deux réglages de masquage."""
+        # Sans synopsis ni tags, la colonne ne garderait qu'un quart de la
+        # largeur pour rien : la grille la récupère.
+        self.info_scroll.setVisible(getattr(self, "has_description", False)
+                                    and not self.description_hidden())
+        globally_hidden = settings.get("hide_description")
+        hidden_here = bool(load_folder_prefs(self.folder_path).get("hide_description"))
+        self.hide_desc_btn.setEnabled(not globally_hidden)
+        self.hide_desc_btn.setIcon(QIcon(resource_path(
+            "assets/icons/eye-white.svg" if hidden_here
+            else "assets/icons/eye-slash-white.svg")))
+        if globally_hidden:
+            self.hide_desc_btn.setToolTip(tr("Synopsis masqué partout par les paramètres"))
+        else:
+            self.hide_desc_btn.setToolTip(tr("Afficher le synopsis") if hidden_here
+                                          else tr("Masquer le synopsis"))
+
+    def toggle_folder_description(self):
+        """Masque ou réaffiche le synopsis de ce dossier, et de lui seul."""
+        if not self.folder_path:
+            return
+        hidden = bool(load_folder_prefs(self.folder_path).get("hide_description"))
+        save_folder_pref(self.folder_path, "hide_description", not hidden)
+        self.update_description_visibility()
 
     def load_header_background(self):
         """Charge l'image de fond du header"""
@@ -2049,7 +2526,7 @@ class FolderViewPage(QWidget):
         try:
             image_path, _ = QFileDialog.getOpenFileName(
                 self,
-                "Choisir une image de fond pour le header",
+                tr("Choisir une image de fond pour le header"),
                 "",
                 "Images (*.png *.jpg *.jpeg *.bmp)"
             )
@@ -2105,6 +2582,8 @@ class FolderViewPage(QWidget):
             alias_map = {}
         fichiers_supportes = []
         languages = load_language_map(self.folder_path)
+        subtitles = load_subtitle_map(self.folder_path)
+        statuses = load_status_map(self.folder_path)
         for item_name in all_items:
             if item_name.startswith('.'):
                 continue
@@ -2135,10 +2614,10 @@ class FolderViewPage(QWidget):
                     # Mise à jour dynamique du bouton select_btn
                     if self.selected_items:
                         self.select_btn.setIcon(QIcon("assets/icons/trash-white.svg"))
-                        self.select_btn.setToolTip("Supprimer la sélection")
+                        self.select_btn.setToolTip(tr("Supprimer la sélection"))
                     else:
                         self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-                        self.select_btn.setToolTip("Sélectionner des fichiers")
+                        self.select_btn.setToolTip(tr("Sélectionner des fichiers"))
                 checkbox.stateChanged.connect(on_state_changed)
             else:
                 checkbox = None
@@ -2151,12 +2630,15 @@ class FolderViewPage(QWidget):
                                   "assets/images/manga_sample.png")
                 widget = ThumbnailWidget(
                     thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox,
-                    language=languages.get(item_name), count=count_chapters(item_path)
+                    language=languages.get(item_name), count=count_chapters(item_path),
+                    subtitle=subtitles.get(item_name), status=statuses.get(item_name)
                 )
                 widget.clicked.connect(
                     functools.partial(self.on_item_clicked, item_path)
                 )
                 widget.alias_requested.connect(self.set_item_alias)
+                widget.subtitle_requested.connect(self.set_item_subtitle)
+                widget.status_requested.connect(self.set_item_status)
                 widget.remove_requested.connect(self.remove_item)
                 widget.language_requested.connect(self.set_item_language)
             # Cas 2: L'élément est un fichier supporté
@@ -2169,12 +2651,15 @@ class FolderViewPage(QWidget):
                                   "assets/images/manga_sample.png")
                 widget = ThumbnailWidget(
                     thumb_path, display_name, path=item_path, show_menu=True, checkbox=checkbox,
-                    language=languages.get(item_name)
+                    language=languages.get(item_name), subtitle=subtitles.get(item_name),
+                    status=statuses.get(item_name)
                 )
                 widget.clicked.connect(
                     functools.partial(self.on_item_clicked, item_path)
                 )
                 widget.alias_requested.connect(self.set_item_alias)
+                widget.subtitle_requested.connect(self.set_item_subtitle)
+                widget.status_requested.connect(self.set_item_status)
                 widget.remove_requested.connect(self.remove_item)
                 widget.language_requested.connect(self.set_item_language)
             if widget:
@@ -2187,13 +2672,13 @@ class FolderViewPage(QWidget):
         if self.selection_mode:
             if self.selected_items:
                 self.select_btn.setIcon(QIcon("assets/icons/trash-white.svg"))
-                self.select_btn.setToolTip("Supprimer la sélection")
+                self.select_btn.setToolTip(tr("Supprimer la sélection"))
             else:
                 self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-                self.select_btn.setToolTip("Sélectionner des fichiers")
+                self.select_btn.setToolTip(tr("Sélectionner des fichiers"))
         else:
             self.select_btn.setIcon(QIcon("assets/icons/check2-all-white.svg"))
-            self.select_btn.setToolTip("Sélectionner des fichiers")
+            self.select_btn.setToolTip(tr("Sélectionner des fichiers"))
         self.select_btn.setChecked(self.selection_mode)
 
     def on_item_clicked(self, path):
@@ -2234,10 +2719,24 @@ class FolderViewPage(QWidget):
         save_item_language(path, code)
         self.refresh_view()
 
+    def set_item_status(self, path, code):
+        """Statut d'un élément, rangé dans le .status.json du dossier."""
+        save_item_status(path, code)
+        self.refresh_view()
+
+    def set_item_subtitle(self, path, current):
+        """Sous-titre d'un élément, rangé dans le .subtitles.json du dossier."""
+        text, ok = ask_text(
+            self, tr("Sous-titre"),
+            tr("Petite ligne affichée sous le titre. Laissez vide pour l'enlever."),
+            current)
+        if ok:
+            save_item_subtitle(path, text.strip())
+            self.refresh_view()
+
     def set_item_alias(self, path, current_name):
         """Renomme un fichier ou dossier (ajoute un alias dans un fichier caché .alias.json du dossier parent)"""
         import json
-        from PySide6.QtWidgets import QInputDialog
         parent_dir = os.path.dirname(path)
         alias_file = os.path.join(parent_dir, '.alias.json')
         if os.path.exists(alias_file):
@@ -2248,7 +2747,9 @@ class FolderViewPage(QWidget):
                 alias_map = {}
         else:
             alias_map = {}
-        alias, ok = QInputDialog.getText(self, "Set alias", "Nouveau nom :", text=current_name)
+        alias, ok = ask_text(self, tr("Renommer"),
+                             tr("Nom affiché à la place de « {name} ».").format(name=current_name),
+                             current_name)
         # Vérifier que l'utilisateur a cliqué sur OK et que le texte n'est pas vide
         if ok and alias and alias.strip():
             alias_map[os.path.basename(path)] = alias.strip()
@@ -2265,7 +2766,7 @@ class FolderViewPage(QWidget):
         if hasattr(self, 'folder_path') and self.folder_path:
             # Afficher un popup de progression
             progress_dialog = ProgressDialog(self)
-            progress_dialog.setWindowTitle("Actualisation du dossier")
+            progress_dialog.setWindowTitle(tr("Actualisation du dossier"))
             progress_dialog.show()
             def progress_callback(msg, value=None):
                 progress_dialog.update_message(msg, value)
@@ -2276,14 +2777,10 @@ class FolderViewPage(QWidget):
             self.refresh_view()
 
     def resizeEvent(self, event):
-        # Rendre le descriptif et les tags responsives
-        if hasattr(self, 'anilist_desc_label'):
-            margin = 40  # marge à gauche/droite
-            new_width = max(200, self.width() - margin)
-            self.anilist_desc_label.setMaximumWidth(new_width)
-        if hasattr(self, 'anilist_tags_widget'):
-            self.anilist_tags_widget.setMaximumWidth(self.width() - margin)
+        # Le synopsis et les tags suivent la largeur de leur zone de défilement ;
+        # seuls les textes du bandeau demandent d'être recoupés.
         super().resizeEvent(event)
+        self.update_header_elision()
 
     def toggle_selection_mode(self):
         if self.selection_mode and self.selected_items:
@@ -2444,15 +2941,15 @@ class FileViewerPage(QWidget):
         nav_layout.setContentsMargins(10, 0, 10, 0)
         nav_layout.setSpacing(10)
 
-        self.back_btn = make_reader_btn("arrow-back", "Retour (Échap)",
+        self.back_btn = make_reader_btn("arrow-back", tr("Retour (Échap)"),
                                         self.back_clicked.emit)
         self.back_btn.setFixedSize(READER_GROUP_HEIGHT, READER_GROUP_HEIGHT)
         self.back_btn.setStyleSheet(S.READER_BACK_BUTTON_STYLE)
         self.back_btn.setIconSize(QSize(19, 19))
 
-        self.prev_btn = make_reader_btn("chevron-left", "Page précédente (←)",
+        self.prev_btn = make_reader_btn("chevron-left", tr("Page précédente (←)"),
                                         self.previous_page)
-        self.next_btn = make_reader_btn("chevron-right", "Page suivante (→)",
+        self.next_btn = make_reader_btn("chevron-right", tr("Page suivante (→)"),
                                         self.next_page)
         self.page_label = QLabel()
         self.page_label.setStyleSheet(S.READER_PAGE_LABEL_STYLE)
@@ -2461,8 +2958,8 @@ class FileViewerPage(QWidget):
         # au passage de 9 à 10, puis de 99 à 100.
         self.page_label.setMinimumWidth(96)
 
-        self.zoom_out_btn = make_reader_btn("zoom-out", "Zoom arrière (-)", self.zoom_out)
-        self.zoom_in_btn = make_reader_btn("zoom-in", "Zoom avant (+)", self.zoom_in)
+        self.zoom_out_btn = make_reader_btn("zoom-out", tr("Zoom arrière (-)"), self.zoom_out)
+        self.zoom_in_btn = make_reader_btn("zoom-in", tr("Zoom avant (+)"), self.zoom_in)
         # Le niveau de zoom est aussi le bouton qui rend la page à la fenêtre :
         # une fois zoomé à la main, plus rien ne ramenait à l'ajustement.
         self.zoom_label = QPushButton()
@@ -2470,7 +2967,7 @@ class FileViewerPage(QWidget):
         self.zoom_label.setMinimumWidth(58)
         self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.zoom_label.setStyleSheet(S.READER_ZOOM_LABEL_STYLE)
-        self.zoom_label.setToolTip("Ajuster la page à la fenêtre")
+        self.zoom_label.setToolTip(tr("Ajuster la page à la fenêtre"))
         self.zoom_label.clicked.connect(self.fit_to_window)
 
         nav_layout.addWidget(self.back_btn)
@@ -2904,7 +3401,7 @@ class ChapterDownloadPage(QWidget):
         central_layout.setSpacing(30)
 
         # Message d'information
-        info_label = QLabel("Téléchargement en cours...")
+        info_label = QLabel(tr("Téléchargement en cours..."))
         info_label.setFont(QFont("Inter", 18))
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         central_layout.addWidget(info_label)
@@ -2917,7 +3414,7 @@ class ChapterDownloadPage(QWidget):
         central_layout.addWidget(self.progress_bar)
 
         # Bouton d'ouverture
-        self.open_btn = QPushButton("Ouvrir le fichier")
+        self.open_btn = QPushButton(tr("Ouvrir le fichier"))
         self.open_btn.setVisible(False)
         self.open_btn.clicked.connect(self.open_file)
         central_layout.addWidget(self.open_btn)
@@ -2984,13 +3481,13 @@ class ChapterDownloadPage(QWidget):
                 self.open_btn.setVisible(True)
                 
                 # Afficher un message de succès
-                QMessageBox.information(self, "Succès", f"Chapitre téléchargé avec succès !\n{self.download_path}")
+                QMessageBox.information(self, tr("Succès"), f"Chapitre téléchargé avec succès !\n{self.download_path}")
                 
             else:
-                QMessageBox.warning(self, "Erreur", f"Impossible de télécharger le chapitre (Erreur {response.status_code})")
+                QMessageBox.warning(self, tr("Erreur"), f"Impossible de télécharger le chapitre (Erreur {response.status_code})")
                 
         except Exception as e:
-            QMessageBox.critical(self, "Erreur", f"Erreur lors du téléchargement : {e}")
+            QMessageBox.critical(self, tr("Erreur"), f"Erreur lors du téléchargement : {e}")
 
     def open_file(self):
         """Ouvre le fichier téléchargé"""
@@ -3003,7 +3500,7 @@ class ChapterDownloadPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PAKU - Manga PDF Reader")
+        self.setWindowTitle(tr("PAKU - Manga PDF Reader"))
         self.setGeometry(100, 100, 1400, 900)
         self.setStyleSheet(S.APP_BACKGROUND_STYLE)
         self.setWindowIcon(QIcon(resource_path("assets/images/logo.png")))
@@ -3085,12 +3582,12 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.folder_view_page)
 
     def open_file(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Ouvrir un fichier", "", "Fichiers supportés (*.pdf *.cbz *.zip *.rar);;PDF Files (*.pdf);;CBZ Files (*.cbz);;ZIP Files (*.zip);;RAR Files (*.rar)")
+        file, _ = QFileDialog.getOpenFileName(self, tr("Ouvrir un fichier"), "", "Fichiers supportés (*.pdf *.cbz *.zip *.rar);;PDF Files (*.pdf);;CBZ Files (*.cbz);;ZIP Files (*.zip);;RAR Files (*.rar)")
         if file:
             self.show_pdf_viewer(file)
 
     def open_directory(self):
-        folder = QFileDialog.getExistingDirectory(self, "Choisir un dossier")
+        folder = QFileDialog.getExistingDirectory(self, tr("Choisir un dossier"))
         self.bookshelf_page.add_folder(folder)
 
     def toggle_theme(self):
@@ -3100,7 +3597,13 @@ class MainWindow(QMainWindow):
         self.apply_theme()
 
     def apply_theme(self):
-        """Applique le thème enregistré, en gardant l'utilisateur où il est."""
+        """Applique thème et langue enregistrés, sans déplacer l'utilisateur.
+
+        Les feuilles de style comme les libellés sont posés à la construction
+        des widgets : les deux réglages passent donc par la même
+        reconstruction.
+        """
+        set_language(settings.get("language"))
         set_theme(settings.get("theme"))
         apply_qt_palette(QApplication.instance())
         self.setStyleSheet(S.APP_BACKGROUND_STYLE)
@@ -3179,13 +3682,17 @@ class MainWindow(QMainWindow):
         rien à faire ici : seuls ceux qui vivent dans des widgets déjà en place
         demandent une reconstruction.
         """
-        if key in ("*", "theme"):
+        if key in ("*", "theme", "language"):
             # La bascule reconstruit les pages, y compris celle qui vient
             # d'émettre : on laisse d'abord le signal se dérouler.
             QTimer.singleShot(0, self.apply_theme)
             return
+        if key in ("*", "hide_description"):
+            # Le bouton de la bannière reflète les deux réglages : il change
+            # d'icône et se désactive quand le masquage est global.
+            self.folder_view_page.update_description_visibility()
         rebuild = key in ("*", "thumbnail_size", "hide_extensions",
-                          "thumbnail_cache_cleared")
+                          "hide_description", "thumbnail_cache_cleared")
         if key in ("*", "default_sort"):
             self.bookshelf_page.apply_sort(settings.get("default_sort") == "az",
                                            save=False)
@@ -3212,7 +3719,8 @@ def generate_all_thumbnails_for_folder(folder_path, progress_callback=None):
     for idx, file in enumerate(files):
         file_path = os.path.join(folder_path, file)
         if progress_callback:
-            progress_callback(f"Chargement de l'image de la vignette : {file}", int((idx+1)/total*100))
+            progress_callback(tr("Chargement de l'image de la vignette : {file}").format(file=file),
+                              int((idx+1)/total*100))
         base = os.path.splitext(file)[0]
         thumb_path = os.path.join(thumb_dir, base + '.png')
         if thumbnail_needs_render(thumb_path, file_path, index):
@@ -3560,6 +4068,57 @@ def apply_qt_palette(app):
     app.setPalette(palette)
 
 
+class SplashScreen(QWidget):
+    """Logo affiché le temps que la fenêtre principale se construise.
+
+    Une simple fenêtre sans cadre, et non un QSplashScreen : celui-ci met une
+    grosse seconde à s'afficher, soit plus que tout le démarrage qu'il est censé
+    faire patienter.
+
+    Le voile est peint plutôt qu'habillé — on y pose une image, pas une feuille
+    de style — mais ses couleurs viennent du thème, pour ne pas éblouir celui
+    qui lit en sombre.
+    """
+
+    def __init__(self, pixmap):
+        super().__init__(None, Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint
+                         | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        label = QLabel(self)
+        label.setPixmap(pixmap)
+        label.setStyleSheet("background: transparent; border: none;")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(label)
+        size = pixmap.deviceIndependentSize().toSize()
+        self.resize(size)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            self.move(screen.geometry().center() - self.rect().center())
+
+
+def make_splash():
+    """Voile de démarrage : le logo seul, sans fond ni cadre.
+
+    Le PNG a déjà sa transparence ; la fenêtre étant translucide, il flotte tel
+    quel sur le bureau plutôt que sur une carte qui jurerait avec ce qu'il y a
+    derrière. Retourne None si l'image manque : mieux vaut pas de voile qu'une
+    fenêtre vide.
+    """
+    logo = QImage(resource_path("assets/images/logo.png"))
+    if logo.isNull():
+        return None
+    screen = QApplication.primaryScreen()
+    ratio = screen.devicePixelRatio() if screen else 1.0
+    side = round(320 * ratio)
+    logo = logo.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
+    pixmap = QPixmap.fromImage(logo)
+    pixmap.setDevicePixelRatio(ratio)
+    return SplashScreen(pixmap)
+
+
 def main():
     # Certains chemins de la bibliothèque sortent du codepage de la console
     # (arabe, japonais) : sans cela, un simple print fait planter l'application.
@@ -3572,21 +4131,32 @@ def main():
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    # Régénérer toutes les vignettes au démarrage (désactivé pour accélérer le lancement)
-    # regenerate_all_thumbnails()
+    # Langue et thème enregistrés, posés avant la construction des pages — et
+    # avant le voile de démarrage, qui emprunte les couleurs du thème.
+    set_language(settings.get("language"))
+    set_theme(settings.get("theme"))
+    apply_qt_palette(app)
+
+    splash = make_splash()
+    if splash is not None:
+        splash.show()
+        # Sans ce tour de boucle, le voile ne serait peint qu'une fois la
+        # fenêtre prête, c'est-à-dire trop tard pour servir à quelque chose.
+        app.processEvents()
+
     # Charger la police Inter
-    font_path = os.path.join("assets", "fonts", "Inter-Regular.ttf")
+    font_path = resource_path(os.path.join("assets", "fonts", "Inter-Regular.ttf"))
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
         app.setFont(QFont("Inter"))
-    # Thème enregistré, posé avant la construction de la moindre page.
-    set_theme(settings.get("theme"))
-    apply_qt_palette(app)
+
     window = MainWindow()
     if settings.get("start_fullscreen"):
         window.showFullScreen()
     else:
         window.show()
+    if splash is not None:
+        splash.close()
     sys.exit(app.exec())
 
 if __name__ == "__main__":

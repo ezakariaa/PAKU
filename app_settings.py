@@ -16,6 +16,7 @@ SETTINGS_FILE = "settings.json"
 # Valeurs par défaut = comportement de l'application avant l'arrivée des réglages.
 DEFAULTS = {
     # --- Général ---
+    "language": "fr",                # langue d'affichage : "fr" | "en"
     "theme": "light",                # "light" | "dark"
     "startup_page": "home",          # "home" | "bookshelf"
     "start_fullscreen": False,
@@ -23,6 +24,7 @@ DEFAULTS = {
     "default_sort": "az",            # "az" | "za"
     "thumbnail_size": "medium",      # "small" | "medium" | "large"
     "hide_extensions": False,
+    "hide_description": False,       # synopsis et tags, dans toutes les vues dossier
     "auto_thumbnails": True,         # générer les vignettes à l'ajout d'un dossier
     "fetch_online_info": True,       # AniList / MangaDex à l'ajout d'un dossier
     # --- Lecteur ---

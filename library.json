@@ -3,7 +3,25 @@
     "path": "D:/07-Ghost"
   },
   {
-    "path": "D:/Akira Toriyama's Manga Theater"
+    "path": "D:/20th Century Boys – Perfect Edition",
+    "alias": "20th Century Boys"
+  },
+  {
+    "path": "D:/Akira Manga Colored",
+    "alias": "Akira"
+  },
+  {
+    "path": "D:/Akira  Vol 1-6 Color Upscaled"
+  },
+  {
+    "path": "D:/Akira Toriyama's Manga Theater",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Alice in Borderland"
+  },
+  {
+    "path": "D:/Alice in Borderland Retry"
   },
   {
     "path": "D:/Alive [Ang]",
@@ -15,16 +33,27 @@
   },
   {
     "path": "D:/Aquablue - 8 Tomes",
-    "alias": "Aquablue"
+    "alias": "Aquablue",
+    "language": "fr"
+  },
+  {
+    "path": "D:/Assassination Classroom"
   },
   {
     "path": "D:/Asterix & Obelix - Pack Collection Complete",
-    "language": "fr"
+    "language": "fr",
+    "alias": "Asterix & Obelix",
+    "subtitle": "Pack Collection Complete",
+    "status": "finished"
   },
   {
     "path": "D:/Asterix - English",
     "alias": "Asterix The Gaul",
-    "language": "en"
+    "language": "en",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Avatar The Last Airbender (The Art of the Animated Series)"
   },
   {
     "path": "D:/Baiser[is]"
@@ -34,14 +63,44 @@
     "language": "fr"
   },
   {
-    "path": "D:/Child Of Hazard [Fr]"
+    "path": "D:/Batman 1940 (1-50)",
+    "alias": "Batman"
+  },
+  {
+    "path": "D:/Batuque",
+    "status": "finished",
+    "language": "fr"
+  },
+  {
+    "path": "D:/berserkfr",
+    "alias": "Berserk"
+  },
+  {
+    "path": "D:/Black Lagoon"
+  },
+  {
+    "path": "D:/Blame!"
+  },
+  {
+    "path": "D:/Bleach"
+  },
+  {
+    "path": "D:/Child Of Hazard [Fr]",
+    "alias": "Child Of Hazard",
+    "language": "fr",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Choujin X"
   },
   {
     "path": "D:/Claymore",
     "language": "en"
   },
   {
-    "path": "D:/COME BACK HOME [fr] Complete"
+    "path": "D:/COME BACK HOME [fr] Complete",
+    "alias": "Come Back Home",
+    "language": "fr"
   },
   {
     "path": "D:/Conan The King"
@@ -50,6 +109,9 @@
     "path": "D:/Dead Note [Fr]",
     "language": "fr",
     "alias": "Dead Note"
+  },
+  {
+    "path": "D:/Detective Conan"
   },
   {
     "path": "D:/Dogs [fr] Complete",
@@ -61,24 +123,74 @@
     "language": "fr"
   },
   {
+    "path": "D:/Dragon Ball [COMPLETE]",
+    "alias": "Dragon Ball"
+  },
+  {
     "path": "D:/Dragon Ball - Digital Color",
+    "language": "fr",
+    "subtitle": "Digital Color",
+    "alias": "Dragon Ball"
+  },
+  {
+    "path": "D:/Dragon Ball Lunch The Story - The Woman Who Sneezed",
+    "alias": "Dragon Ball Lunch The Story",
+    "status": "finished",
     "language": "fr"
   },
   {
+    "path": "D:/Dragon Ball Super"
+  },
+  {
     "path": "D:/Dragon Fall"
+  },
+  {
+    "path": "D:/Dragon's Crown"
+  },
+  {
+    "path": "D:/Druuna"
+  },
+  {
+    "path": "D:/Evil Heroes"
+  },
+  {
+    "path": "D:/Four Knights Of The Apocalypse"
   },
   {
     "path": "D:/Full Metal Alchemist – Perfect Édition",
     "alias": "FullMetal Alchemist"
   },
   {
-    "path": "D:/Hergé - Tintin - The Complete Collection sur Dexter"
+    "path": "D:/Ghibli"
   },
   {
-    "path": "D:/Hong Kong Triad - 3 Tomes"
+    "path": "D:/Great Teacher Onizuka"
   },
   {
-    "path": "D:/Horologiom - 5 Tomes"
+    "path": "D:/Guyver"
+  },
+  {
+    "path": "D:/Haikyu !!",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Helltaker"
+  },
+  {
+    "path": "D:/Hergé - Tintin - The Complete Collection sur Dexter",
+    "alias": "Hergé - Tintin",
+    "subtitle": "The Complete Collection",
+    "language": "en",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Hong Kong Triad - 3 Tomes",
+    "alias": "Hong Kong Triad"
+  },
+  {
+    "path": "D:/Horologiom - 5 Tomes",
+    "language": "fr",
+    "alias": "Horologiom"
   },
   {
     "path": "D:/How To Draw"
@@ -87,52 +199,130 @@
     "path": "D:/Hunter X Hunter"
   },
   {
-    "path": "D:/Intégral - Natasha 19 Tomes + 3 HS"
+    "path": "D:/Instinct, Tale of Midilgard !"
+  },
+  {
+    "path": "D:/Inu Yasha",
+    "alias": "InuYasha"
+  },
+  {
+    "path": "D:/Kaiju No 8"
+  },
+  {
+    "path": "D:/Kenshin Le Vagabond - Perfect Edition",
+    "alias": "Kenshin Le Vagabond"
   },
   {
     "path": "D:/King of Fighters Zillion"
   },
   {
-    "path": "D:/La Colorisation de BD"
+    "path": "D:/La Colorisation de BD",
+    "language": "fr",
+    "status": "finished"
   },
   {
-    "path": "D:/Le Chat [12 Tomes]"
+    "path": "D:/La Fleur de la Bête"
   },
   {
-    "path": "D:/Le Grand pouvoir du Chninkel [1-4]"
+    "path": "D:/Le Chat [12 Tomes]",
+    "language": "fr",
+    "alias": "Le Chat"
   },
   {
-    "path": "D:/Le Prince De La Nuit - 6 Tomes"
+    "path": "D:/Le Grand pouvoir du Chninkel [1-4]",
+    "language": "fr",
+    "alias": "Le Grand pouvoir du Chninkel"
   },
   {
-    "path": "D:/Les Aventures de Tintin"
+    "path": "D:/Le Prince De La Nuit - 6 Tomes",
+    "language": "fr",
+    "status": "finished",
+    "alias": "Le Prince De La Nuit"
   },
   {
-    "path": "D:/Les Blondes - 2 Tomes"
+    "path": "D:/Les Aventures de Tintin",
+    "language": "fr",
+    "status": "finished"
   },
   {
-    "path": "D:/Les Tuniques Bleues - 49 Tomes"
+    "path": "D:/Les Blondes - 2 Tomes",
+    "language": "fr",
+    "alias": "Les Blondes"
   },
   {
-    "path": "D:/Lucky Luke Collection"
+    "path": "D:/Les Tuniques Bleues - 49 Tomes",
+    "language": "fr",
+    "status": "finished",
+    "alias": "Les Tuniques Bleues"
   },
   {
-    "path": "D:/Léonard - 35 Tomes"
+    "path": "D:/Lucky Luke Collection",
+    "language": "fr",
+    "status": "finished"
+  },
+  {
+    "path": "D:/Léonard - 35 Tomes",
+    "language": "fr",
+    "status": "finished",
+    "alias": "Léonard"
+  },
+  {
+    "path": "D:/MamaYuyu"
   },
   {
     "path": "D:/Marvels"
   },
   {
-    "path": "D:/Murena - 4 Tomes"
+    "path": "D:/Murena - 4 Tomes",
+    "language": "fr",
+    "alias": "Murena"
   },
   {
-    "path": "D:/Nemesis - 5 Tomes"
+    "path": "D:/Intégral - Natasha 19 Tomes + 3 HS",
+    "language": "fr",
+    "alias": "Natasha",
+    "subtitle": "19 Tomes + 3 HS"
   },
   {
-    "path": "D:/One Piece (01-100+3HS) (Oda) (2000) [Digital-1920] [Manga FR] (PRiNTER-PapriKa+)"
+    "path": "D:/Nemesis - 5 Tomes",
+    "language": "fr",
+    "alias": "Nemesis"
   },
   {
-    "path": "D:/Peter Pan - 6 Tomes"
+    "path": "D:/Ô rô   [Fr]",
+    "language": "fr",
+    "alias": "Oh Roh"
+  },
+  {
+    "path": "D:/One Piece"
+  },
+  {
+    "path": "D:/One Piece (01-100+3HS) (Oda) (2000) [Digital-1920] [Manga FR] (PRiNTER-PapriKa+)",
+    "alias": "One Piece",
+    "subtitle": "(01-100+3HS) (Oda) (2000)"
+  },
+  {
+    "path": "D:/Peter Pan - 6 Tomes",
+    "language": "fr",
+    "alias": "Peter Pan"
+  },
+  {
+    "path": "D:/The Complete Fables Issues 1-150"
+  },
+  {
+    "path": "D:/Majora's Mask Manga (English Translation)",
+    "alias": "The Legend Of Zelda Majora's Mask",
+    "language": "en",
+    "status": "finished",
+    "subtitle": "(English Translation)"
+  },
+  {
+    "path": "D:/Ocarina of Time Manga (English Translation)",
+    "alias": "The Legend Of Zelda Ocarina of Time",
+    "subtitle": "(English Translation)"
+  },
+  {
+    "path": "D:/The Pool"
   },
   {
     "path": "D:/Tintin - Eng"
@@ -141,9 +331,33 @@
     "path": "D:/Titan Forge"
   },
   {
-    "path": "D:/Yoko Stuno - 23 Tomes"
+    "path": "D:/Tokyo Ghoul"
   },
   {
-    "path": "D:/Ô rô   [Fr]"
+    "path": "D:/Vinland Saga"
+  },
+  {
+    "path": "D:/Yoko Stuno - 23 Tomes",
+    "language": "fr",
+    "alias": "Yoko Stuno"
+  },
+  {
+    "path": "D:/Yu Yu Hakusho"
+  },
+  {
+    "path": "D:/المكتب رقم 19",
+    "language": "ar"
+  },
+  {
+    "path": "D:/حكاية لا تنسى",
+    "language": "ar"
+  },
+  {
+    "path": "D:/ما وراء الكون",
+    "language": "ar"
+  },
+  {
+    "path": "D:/ميكى",
+    "language": "ar"
   }
 ]

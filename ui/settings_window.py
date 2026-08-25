@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractButton, QComboBox, QDialog, QFrame,
                                QVBoxLayout, QWidget)
 
 from app_settings import THUMBNAIL_SIZES, settings
+from i18n import tr, UI_LANGUAGES
 from styles.styles import S
 
 THUMB_CACHE_DIRNAME = ".thumbnails"
@@ -111,7 +112,7 @@ class SettingsWindow(QDialog):
         self._library_paths = library_paths or (lambda: [])
         # Rechargeurs appelés après une réinitialisation, un par contrôle.
         self._reloaders = []
-        self.setWindowTitle("PAKU - Paramètres")
+        self.setWindowTitle(tr("PAKU - Paramètres"))
         self.setStyleSheet(S.SETTINGS_WINDOW_STYLE)
         self.setMinimumSize(720, 560)
         self.resize(820, 640)
@@ -123,11 +124,11 @@ class SettingsWindow(QDialog):
         layout.setContentsMargins(28, 22, 28, 18)
         layout.setSpacing(0)
 
-        title = QLabel("Paramètres")
+        title = QLabel(tr("Paramètres"))
         title.setStyleSheet(S.SETTINGS_TITLE_STYLE)
         layout.addWidget(title)
 
-        subtitle = QLabel("Réglez le comportement de PAKU. Tout est enregistré à la volée.")
+        subtitle = QLabel(tr("Réglez le comportement de PAKU. Tout est enregistré à la volée."))
         subtitle.setStyleSheet(S.SETTINGS_SUBTITLE_STYLE)
         layout.addWidget(subtitle)
         layout.addSpacing(18)
@@ -137,7 +138,7 @@ class SettingsWindow(QDialog):
         tab_bar.setContentsMargins(0, 0, 0, 0)
         tab_bar.setSpacing(24)
         self._tab_buttons = []
-        for index, name in enumerate(("Général", "Bibliothèque", "Lecteur", "Avancé")):
+        for index, name in enumerate((tr("Général"), tr("Bibliothèque"), tr("Lecteur"), tr("Avancé"))):
             button = QPushButton(name)
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -168,13 +169,13 @@ class SettingsWindow(QDialog):
         layout.addSpacing(14)
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
-        reset_btn = QPushButton("Réinitialiser les réglages")
+        reset_btn = QPushButton(tr("Réinitialiser les réglages"))
         reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         reset_btn.setStyleSheet(S.SETTINGS_LINK_BUTTON_STYLE)
         reset_btn.clicked.connect(self.reset_settings)
         footer.addWidget(reset_btn)
         footer.addStretch()
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("Fermer"))
         close_btn.setFixedHeight(36)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(S.SETTINGS_PRIMARY_BUTTON_STYLE)
@@ -354,88 +355,96 @@ class SettingsWindow(QDialog):
     # -- pages ------------------------------------------------------------
     def build_general(self):
         page, layout = self.new_page()
-        self.section(layout, "Apparence")
-        self.add_combo(layout, "theme", "Thème",
-                       "Le même réglage que le bouton lune de la page d'accueil.",
-                       [("light", "Clair"), ("dark", "Sombre")])
+        self.section(layout, tr("Apparence"))
+        self.add_combo(layout, "theme", tr("Thème"),
+                       tr("Le même réglage que le bouton lune de la page d'accueil."),
+                       [("light", tr("Clair")), ("dark", tr("Sombre"))])
+        self.add_combo(layout, "language", tr("Langue d'affichage"),
+                       tr("Langue de l'interface. Sans effet sur les synopsis, qui "
+                          "suivent la langue de chaque collection."),
+                       list(UI_LANGUAGES))
 
-        self.section(layout, "Démarrage")
-        self.add_combo(layout, "startup_page", "Page d'ouverture",
-                       "Écran affiché au lancement de l'application.",
-                       [("home", "Accueil"), ("bookshelf", "Bibliothèque")])
-        self.add_toggle(layout, "start_fullscreen", "Démarrer en plein écran",
-                        "Pris en compte au prochain lancement.",
-                        on_text="Oui", off_text="Non")
+        self.section(layout, tr("Démarrage"))
+        self.add_combo(layout, "startup_page", tr("Page d'ouverture"),
+                       tr("Écran affiché au lancement de l'application."),
+                       [("home", tr("Accueil")), ("bookshelf", tr("Bibliothèque"))])
+        self.add_toggle(layout, "start_fullscreen", tr("Démarrer en plein écran"),
+                        tr("Pris en compte au prochain lancement."),
+                        on_text=tr("Oui"), off_text=tr("Non"))
         layout.addStretch()
         return page
 
     def build_library(self):
         page, layout = self.new_page()
-        self.section(layout, "Affichage")
+        self.section(layout, tr("Affichage"))
         thumb_options = [
-            ("small", f"Petite ({THUMBNAIL_SIZES['small'][0]} px)"),
-            ("medium", f"Moyenne ({THUMBNAIL_SIZES['medium'][0]} px)"),
-            ("large", f"Grande ({THUMBNAIL_SIZES['large'][0]} px)"),
+            ("small", tr("Petite ({size} px)").format(size=THUMBNAIL_SIZES["small"][0])),
+            ("medium", tr("Moyenne ({size} px)").format(size=THUMBNAIL_SIZES["medium"][0])),
+            ("large", tr("Grande ({size} px)").format(size=THUMBNAIL_SIZES["large"][0])),
         ]
-        self.add_combo(layout, "thumbnail_size", "Taille des vignettes",
-                       "Largeur des pochettes dans la grille : la grille se "
-                       "réorganise aussitôt.", thumb_options)
-        self.add_combo(layout, "default_sort", "Tri par défaut",
-                       "Ordre appliqué à la bibliothèque à l'ouverture.",
+        self.add_combo(layout, "thumbnail_size", tr("Taille des vignettes"),
+                       tr("Largeur des pochettes dans la grille : la grille se "
+                       "réorganise aussitôt."), thumb_options)
+        self.add_combo(layout, "default_sort", tr("Tri par défaut"),
+                       tr("Ordre appliqué à la bibliothèque à l'ouverture."),
                        [("az", "A → Z"), ("za", "Z → A")])
-        self.add_toggle(layout, "hide_extensions", "Masquer les extensions",
-                        "Affiche « Chapitre 12 » au lieu de « Chapitre 12.cbz ». "
-                        "Sans effet sur les éléments que vous avez renommés.",
-                        on_text="Masquées", off_text="Affichées")
+        self.add_toggle(layout, "hide_extensions", tr("Masquer les extensions"),
+                        tr("Affiche « Chapitre 12 » au lieu de « Chapitre 12.cbz ». "
+                        "Sans effet sur les éléments que vous avez renommés."),
+                        on_text=tr("Masquées"), off_text=tr("Affichées"))
+        self.add_toggle(layout, "hide_description", tr("Masquer le synopsis partout"),
+                        tr("Retire le résumé et les tags de toutes les vues dossier. "
+                           "Un dossier peut aussi être masqué seul, depuis sa bannière."),
+                        on_text=tr("Masqué"), off_text=tr("Affiché"))
 
-        self.section(layout, "Ajout d'un dossier")
-        self.add_toggle(layout, "auto_thumbnails", "Générer les vignettes à l'ajout",
-                        "Prépare toutes les pochettes d'un coup. Désactivé, elles "
-                        "sont créées au fil de l'affichage et l'ajout est immédiat.",
-                        on_text="Oui", off_text="Non")
-        self.add_toggle(layout, "fetch_online_info", "Récupérer les infos en ligne",
-                        "Synopsis, tags, bannière et couverture depuis AniList et "
-                        "MangaDex. Désactivé, l'ajout ne contacte aucun serveur.",
-                        on_text="Oui", off_text="Non")
+        self.section(layout, tr("Ajout d'un dossier"))
+        self.add_toggle(layout, "auto_thumbnails", tr("Générer les vignettes à l'ajout"),
+                        tr("Prépare toutes les pochettes d'un coup. Désactivé, elles "
+                        "sont créées au fil de l'affichage et l'ajout est immédiat."),
+                        on_text=tr("Oui"), off_text=tr("Non"))
+        self.add_toggle(layout, "fetch_online_info", tr("Récupérer les infos en ligne"),
+                        tr("Synopsis, tags, bannière et couverture depuis AniList et "
+                        "MangaDex. Désactivé, l'ajout ne contacte aucun serveur."),
+                        on_text=tr("Oui"), off_text=tr("Non"))
         layout.addStretch()
         return page
 
     def build_reader(self):
         page, layout = self.new_page()
-        self.section(layout, "Molette")
-        self.add_slider(layout, "wheel_zoom_step", "Pas de zoom",
-                        "Zoom gagné ou perdu à chaque cran de molette.",
+        self.section(layout, tr("Molette"))
+        self.add_slider(layout, "wheel_zoom_step", tr("Pas de zoom"),
+                        tr("Zoom gagné ou perdu à chaque cran de molette."),
                         5, 50, " %")
-        self.add_toggle(layout, "invert_wheel", "Inverser le sens",
-                        "Molette vers le haut pour dézoomer.",
-                        on_text="Inversé", off_text="Normal")
+        self.add_toggle(layout, "invert_wheel", tr("Inverser le sens"),
+                        tr("Molette vers le haut pour dézoomer."),
+                        on_text=tr("Inversé"), off_text=tr("Normal"))
 
-        self.section(layout, "Pages")
-        self.add_toggle(layout, "keep_zoom_between_pages", "Conserver le zoom",
-                        "Garde votre niveau de zoom d'une page à l'autre. Désactivé, "
-                        "chaque page repart ajustée à la fenêtre.",
-                        on_text="Oui", off_text="Non")
+        self.section(layout, tr("Pages"))
+        self.add_toggle(layout, "keep_zoom_between_pages", tr("Conserver le zoom"),
+                        tr("Garde votre niveau de zoom d'une page à l'autre. Désactivé, "
+                        "chaque page repart ajustée à la fenêtre."),
+                        on_text=tr("Oui"), off_text=tr("Non"))
         layout.addStretch()
         return page
 
     def build_advanced(self):
         page, layout = self.new_page()
-        self.section(layout, "Maintenance")
-        self.add_action(layout, "Cache des vignettes",
-                        "Supprime les dossiers « .thumbnails » de la bibliothèque. "
+        self.section(layout, tr("Maintenance"))
+        self.add_action(layout, tr("Cache des vignettes"),
+                        tr("Supprime les dossiers « .thumbnails » de la bibliothèque. "
                         "Les pochettes que vous avez choisies vous-même seront "
-                        "perdues, les autres seront régénérées.",
-                        "Vider", self.clear_thumbnail_cache)
-        self.add_action(layout, "Fichiers de configuration",
-                        f"library.json et settings.json vivent dans "
-                        f"{settings.config_dir()}.",
-                        "Ouvrir le dossier", self.open_config_dir)
+                        "perdues, les autres seront régénérées."),
+                        tr("Vider"), self.clear_thumbnail_cache)
+        self.add_action(layout, tr("Fichiers de configuration"),
+                        tr("library.json et settings.json vivent dans {folder}.")
+                        .format(folder=settings.config_dir()),
+                        tr("Ouvrir le dossier"), self.open_config_dir)
 
-        self.section(layout, "Diagnostic")
-        self.add_toggle(layout, "debug_traces", "Traces de débogage",
-                        "Écrit le détail des opérations dans la console. Utile pour "
-                        "signaler un problème, coûteux sur une grosse bibliothèque.",
-                        on_text="Activées", off_text="Silencieuses")
+        self.section(layout, tr("Diagnostic"))
+        self.add_toggle(layout, "debug_traces", tr("Traces de débogage"),
+                        tr("Écrit le détail des opérations dans la console. Utile pour "
+                        "signaler un problème, coûteux sur une grosse bibliothèque."),
+                        on_text=tr("Activées"), off_text=tr("Silencieuses"))
         layout.addStretch()
         return page
 
@@ -451,15 +460,16 @@ class SettingsWindow(QDialog):
                     # Inutile de descendre dans un cache que l'on va supprimer.
                     dirs.remove(THUMB_CACHE_DIRNAME)
         if not caches:
-            QMessageBox.information(self, "Cache des vignettes",
-                                    "Aucun cache à supprimer.")
+            QMessageBox.information(self, tr("Cache des vignettes"),
+                                    tr("Aucun cache à supprimer."))
             return
         answer = QMessageBox.question(
-            self, "Vider le cache des vignettes",
-            f"{len(caches)} dossier(s) « {THUMB_CACHE_DIRNAME} » vont être supprimés.\n\n"
-            "Les pochettes personnalisées et les bannières téléchargées seront "
-            "perdues ; les autres seront régénérées à la prochaine ouverture.\n\n"
-            "Continuer ?",
+            self, tr("Vider le cache des vignettes"),
+            tr("{count} dossier(s) « {name} » vont être supprimés.")
+            .format(count=len(caches), name=THUMB_CACHE_DIRNAME) + "\n\n"
+            + tr("Les pochettes personnalisées et les bannières téléchargées seront "
+                 "perdues ; les autres seront régénérées à la prochaine ouverture.")
+            + "\n\n" + tr("Continuer ?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
@@ -472,12 +482,13 @@ class SettingsWindow(QDialog):
             except OSError as e:
                 failed.append(f"{cache} : {e}")
         if failed:
-            QMessageBox.warning(self, "Cache des vignettes",
-                                f"{removed} dossier(s) supprimé(s).\n\nÉchecs :\n"
+            QMessageBox.warning(self, tr("Cache des vignettes"),
+                                tr("{count} dossier(s) supprimé(s).").format(count=removed)
+                                + "\n\n" + tr("Échecs :") + "\n"
                                 + "\n".join(failed[:5]))
         else:
-            QMessageBox.information(self, "Cache des vignettes",
-                                    f"{removed} dossier(s) supprimé(s).")
+            QMessageBox.information(self, tr("Cache des vignettes"),
+                                    tr("{count} dossier(s) supprimé(s).").format(count=removed))
         self.settings_changed.emit("thumbnail_cache_cleared")
 
     def open_config_dir(self):
@@ -490,13 +501,14 @@ class SettingsWindow(QDialog):
             else:
                 subprocess.Popen(["xdg-open", directory])
         except OSError as e:
-            QMessageBox.warning(self, "Configuration",
-                                f"Impossible d'ouvrir {directory} : {e}")
+            QMessageBox.warning(self, tr("Configuration"),
+                                tr("Impossible d'ouvrir {folder} : {error}")
+                                .format(folder=directory, error=e))
 
     def reset_settings(self):
         answer = QMessageBox.question(
-            self, "Réinitialiser",
-            "Tous les réglages reviennent à leur valeur d'origine. Continuer ?",
+            self, tr("Réinitialiser"),
+            tr("Tous les réglages reviennent à leur valeur d'origine. Continuer ?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:

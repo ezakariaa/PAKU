@@ -1,0 +1,16 @@
+{
+  "language": "fr",
+  "theme": "light",
+  "startup_page": "home",
+  "start_fullscreen": false,
+  "default_sort": "az",
+  "thumbnail_size": "small",
+  "hide_extensions": true,
+  "hide_description": false,
+  "auto_thumbnails": true,
+  "fetch_online_info": true,
+  "wheel_zoom_step": 15,
+  "invert_wheel": false,
+  "keep_zoom_between_pages": true,
+  "debug_traces": false
+}

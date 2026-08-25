@@ -26,15 +26,14 @@ PALETTES = {
         "text_muted": "#5a6270",
         "text_soft": "#8b94a3",      # le total de pages, a cote du numero courant
         "thumb_border": "#111111",
-        "scroll_handle": "#222222",
-        "scroll_handle_soft": "#c2c9d3",
+        "scroll_handle": "#b8c1cd",
         "accent_tint": "#fdf1ef",    # survol tres pale d'un bouton borde
         "accent_wash": "rgba(231, 76, 60, 0.12)",
         "accent_wash_strong": "rgba(231, 76, 60, 0.22)",
         "tag_bg": "#e6dca4",
         "tag_text": "#444444",
         "shadow": "#0b1220",
-        "shadow_alpha": "90",
+        "shadow_alpha": "135",
     },
     "dark": {
         "bg": "#14171d",
@@ -47,15 +46,14 @@ PALETTES = {
         "text_muted": "#9aa3b0",
         "text_soft": "#6f7885",
         "thumb_border": "#39414d",
-        "scroll_handle": "#4b5563",
-        "scroll_handle_soft": "#414a57",
+        "scroll_handle": "#49525f",
         "accent_tint": "#2b2024",
         "accent_wash": "rgba(231, 76, 60, 0.22)",
         "accent_wash_strong": "rgba(231, 76, 60, 0.34)",
         "tag_bg": "#3b3524",
         "tag_text": "#e6dca4",
         "shadow": "#000000",
-        "shadow_alpha": "190",
+        "shadow_alpha": "225",
     },
 }
 
@@ -152,10 +150,24 @@ THUMBNAIL_IMAGE_HOVER_STYLE = """
 THUMBNAIL_SHADOW_COLORS = {
     "color": "@shadow",
     "alpha": "@shadow_alpha",
-    "blur": "26",
-    # Lumiere venue d'en haut a gauche : l'ombre tombe vers le bas a droite.
-    "offset_x": "3",
-    "offset_y": "8",
+    "blur": "30",
+    # Ombre purement descendante : avec le cadre noir de la pochette, un decalage
+    # lateral se lit comme un defaut d'alignement plutot que comme une ombre.
+    "offset_x": "0",
+    "offset_y": "9",
+}
+
+# Pastille de statut, juste au-dessus du nombre de chapitres. Ici la couleur
+# porte le sens : elle ne suit donc pas le theme, seulement le statut.
+THUMBNAIL_STATUS_COLORS = {
+    "ongoing": "#2f6fb0",
+    "finished": "#1f8a4c",
+    "alpha": "235",
+    "border": "#ffffff",
+    # Contour plus franc que celui du compteur : sa couleur pouvant tomber sur
+    # une pochette de la meme teinte, c'est le liseré qui detache la pastille.
+    "border_alpha": "150",
+    "text": "#ffffff",
 }
 
 # Pastille du nombre de chapitres, posée sur la pochette. Elle est peinte sur
@@ -178,6 +190,43 @@ THUMBNAIL_MENU_BUTTON_STYLE = """
     }
     QPushButton:hover   { background: #e74c3c; }
     QPushButton:pressed { background: #c9402f; }
+"""
+
+# Menu de la pastille ⋯ : une carte posee sur la grille, meme matiere que les
+# autres surfaces du theme. Le fond translucide de la fenetre laisse les coins
+# arrondis se decouper proprement (voir make_thumbnail_menu dans main.py).
+THUMBNAIL_MENU_STYLE = """
+    QMenu {
+        background: @surface;
+        border: 1px solid @border;
+        border-radius: 12px;
+        padding: 6px;
+        color: @text;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+    }
+    QMenu::item {
+        padding: 8px 26px 8px 10px;
+        margin: 1px 2px;
+        border-radius: 8px;
+    }
+    QMenu::item:selected {
+        background: @accent_wash;
+        color: #e74c3c;
+    }
+    QMenu::item:disabled { color: @text_soft; }
+    QMenu::icon { margin-left: 10px; }
+    /* La coche d'une langue occupe la meme gouttiere que les icones. */
+    QMenu::indicator {
+        width: 16px; height: 16px;
+        margin-left: 10px;
+    }
+    QMenu::separator {
+        height: 1px;
+        background: @border;
+        margin: 6px 10px;
+    }
+    QMenu::right-arrow { width: 10px; height: 10px; margin-right: 10px; }
 """
 
 # =====================================================================================
@@ -209,18 +258,33 @@ PROGRESS_BAR_STYLE = """
     }
 """
 
+# Ascenseurs de toute l'application : fins, arrondis, sans les flèches de bout
+# que Fusion dessine à sa façon et qui juraient avec le reste.
+SCROLLBAR_STYLE = """
+    QScrollBar:vertical {
+        background: transparent; width: 12px; margin: 6px 2px 6px 0;
+        border-radius: 6px;
+    }
+    QScrollBar:horizontal {
+        background: transparent; height: 12px; margin: 0 6px 2px 6px;
+        border-radius: 6px;
+    }
+    QScrollBar::handle:vertical {
+        background: @scroll_handle; min-height: 40px; border-radius: 6px;
+    }
+    QScrollBar::handle:horizontal {
+        background: @scroll_handle; min-width: 40px; border-radius: 6px;
+    }
+    QScrollBar::handle:vertical:hover,
+    QScrollBar::handle:horizontal:hover { background: #e74c3c; }
+    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+"""
+
 # Style pour les zones de défilement
 SCROLL_AREA_STYLE = """
     QScrollArea { background: transparent; border: none; }
-    QScrollBar:vertical {
-        background: transparent; width: 14px; margin: 4px 0 4px 0;
-        border-radius: 7px;
-    }
-    QScrollBar::handle:vertical {
-        background: @scroll_handle; min-height: 40px; border-radius: 7px;
-    }
-    QScrollBar::handle:vertical:hover { background: #e74c3c; }
-"""
+""" + SCROLLBAR_STYLE
 
 # Style pour les boutons icônes simples (sans hover)
 ICON_BUTTON_STYLE = "background: none; border: none;"
@@ -333,7 +397,7 @@ PAGE_TITLE_STYLE = """
     background: transparent;
     border: none;
     outline: none;
-    font-size: 32px;
+    font-size: 42px;
     font-family: 'Inter', sans-serif;
     font-weight: bold;
     text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.85);
@@ -649,26 +713,7 @@ READER_VIEW_STYLE = """
         border: 1px solid @border;
         border-radius: 14px;
     }
-    QScrollBar:vertical {
-        background: transparent; width: 12px; margin: 6px 2px 6px 0;
-        border-radius: 6px;
-    }
-    QScrollBar:horizontal {
-        background: transparent; height: 12px; margin: 0 6px 2px 6px;
-        border-radius: 6px;
-    }
-    QScrollBar::handle:vertical {
-        background: @scroll_handle_soft; min-height: 40px; border-radius: 6px;
-    }
-    QScrollBar::handle:horizontal {
-        background: @scroll_handle_soft; min-width: 40px; border-radius: 6px;
-    }
-    QScrollBar::handle:vertical:hover,
-    QScrollBar::handle:horizontal:hover { background: #e74c3c; }
-    /* Fleches de bout de barre : elles n'apportent rien a la lecture. */
-    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
-    QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-"""
+""" + SCROLLBAR_STYLE
 
 
 # =====================================================================================
@@ -679,6 +724,11 @@ READER_VIEW_STYLE = """
 APP_BACKGROUND_STYLE = "background-color: @bg;"
 
 THUMBNAIL_TITLE_STYLE = "font-size: 15px; color: @text; margin: 0px; padding: 0px;"
+
+# Sous-titre facultatif, sous le titre d'une pochette : plus petit et en
+# retrait, pour rester une precision et non un second titre.
+THUMBNAIL_SUBTITLE_STYLE = ("font-size: 12px; color: @text_muted; "
+                            "margin: 0px; padding: 0px;")
 
 # Synopsis AniList, sous la banniere de la vue dossier.
 FOLDER_DESC_STYLE = "font-size: 15px; color: @text_muted; margin-top: 10px;"
@@ -696,6 +746,52 @@ FOLDER_TAG_STYLE = """
 
 # Filet horizontal, sous les onglets de la fenetre de parametres.
 SETTINGS_RULE_STYLE = "background: @border; border: none;"
+
+
+# =====================================================================================
+# BOITE DE SAISIE
+# =====================================================================================
+# Renommage, sous-titre : une carte sans cadre systeme, comme la boite de
+# progression, mais aux couleurs du theme puisqu'elle porte du texte saisi.
+PROMPT_CARD_STYLE = """
+    QWidget#promptCard {
+        background: @surface;
+        border: 1px solid @border;
+        border-radius: 16px;
+    }
+"""
+
+PROMPT_TITLE_STYLE = """
+    color: @text;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 16px;
+    font-weight: bold;
+"""
+
+PROMPT_MESSAGE_STYLE = """
+    color: @text_muted;
+    background: transparent;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+"""
+
+PROMPT_INPUT_STYLE = """
+    QLineEdit {
+        background: @bg;
+        border: 1px solid @border_strong;
+        border-radius: 10px;
+        padding: 9px 12px;
+        color: @text;
+        font-family: 'Inter', sans-serif;
+        font-size: 14px;
+        selection-background-color: #e74c3c;
+        selection-color: #ffffff;
+    }
+    QLineEdit:focus { border: 1px solid #e74c3c; }
+"""
 
 
 # =====================================================================================
@@ -752,3 +848,4 @@ def theme_color(token):
 
 
 set_theme("light")
+
